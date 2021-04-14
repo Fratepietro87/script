@@ -4,7 +4,7 @@ do
 	do
 		if [ $FILE != "$CODA" ]
 		then
-		echo "TO_DP68_SIDS;$FILE">>confY6.csv
+		echo "$CODA;$FILE">>confY6.csv
 		fi
 		
 	done 
