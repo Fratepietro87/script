@@ -1,0 +1,91 @@
+#!/bin/ksh
+export RUNPATH=/oradata/ITT0/app/spOrchSuite/bin/runtime/WSRR/Utility/Query
+if [ $# -le 1 ]; then
+echo "Passare come primo parametro l'ambiente (PROD o SYS) 
+come secondo la directory di output
+come terzo la data delta YYYY-MM-DD
+come quarto opzionale timeout curl espresso in secondi"
+exit 1
+ elif [ $# -gt 4 ]; then
+echo "Passare come primo parametro l'ambiente (PROD o SYS) 
+come secondo la directory di output
+come terzo la data delta YYYY-MM-DD
+come quarto opzionale timeout curl espresso in secondi"
+exit 1
+fi
+
+if [ "$#" -eq 4 ]; then 
+export TT=$4
+timeout=" --max-time ${TT}"
+fi
+if [ $1 = "PROD" ]; then 
+export AMBIENTE='http://ixpwebservices.bancaintesa.it:9081/WSRR/7.0/Metadata/XML/GraphQuery'
+export LAMB='PROD'
+elif [ $1 = "SYS" ]; then 
+export AMBIENTE='http://ixpwebservices-col.bancaintesa.it:9081/WSRR/7.0/Metadata/XML/GraphQuery'
+export LAMB='SYS'
+else 
+echo "ambiente (PROD o SYS)" 
+exit 1
+fi
+export DELTADATA=$3
+time='00:00:00.000'
+some_date="$DELTADATA $time"
+delta_date=$(date -d "$some_date" +%s000)
+echo $delta_date
+export OUTDIR=$2
+mkdir -p -- "$OUTDIR"
+current_big_export_ts=$(date +%Y%m%d_%H%M%S)
+FILELOG=$OUTDIR/WSRREXP_${LAMB}_log.out
+exec 1>> $FILELOG 2>&1
+echo 
+echo --------------- IXPWSRRDELTAEXPORT $some_date in millisecondi $delta_date ---------------
+
+
+
+echo ---- Esecuzione Delta in $LAMB Query FT $DELTADATA ----
+date "+%A %B %d %T %3N"
+echo FT WSRREXP_${LAMB}_B-UPDT_FT_runon_${DELTADATA}_from_$current_big_export_ts.xml
+curl -g --get $timeout "$AMBIENTE" --data-urlencode "query=/WSRR/GenericObject[@lastModified >= $delta_date and @namespace='http://www.bancaintesa.com/xmlns/wsrr/filetransfer']" -o $OUTDIR/WSRREXP_${LAMB}_B-UPDT_FT_runon_${DELTADATA}_from_$current_big_export_ts.xml
+date "+%A %B %d %T %3N"
+echo 
+
+
+echo ---- Esecuzione Delta in $LAMB Query CAT $DELTADATA ----
+date "+%A %B %d %T %3N"
+echo CAT WSRREXP_${LAMB}_B-UPDT_CAT_runon_${DELTADATA}_from_$current_big_export_ts.xml
+curl -g --get $timeout "$AMBIENTE" --data-urlencode "query=/WSRR/GenericObject[@lastModified >= $delta_date and @namespace='http://www.bancaintesa.com/xmlns/wsrr/catalog']" -o $OUTDIR/WSRREXP_${LAMB}_B-UPDT_CAT_runon_${DELTADATA}_from_$current_big_export_ts.xml
+date "+%A %B %d %T %3N"
+echo 
+
+
+echo ---- Esecuzione Delta in $LAMB Query DIR $DELTADATA ----
+date "+%A %B %d %T %3N"
+echo DIR WSRREXP_${LAMB}_B-UPDT_DIR_runon_${DELTADATA}_from_$current_big_export_ts.xml
+curl -g --get $timeout "$AMBIENTE" --data-urlencode "query=/WSRR/GenericObject[@lastModified >= $delta_date and @namespace='http://www.bancaintesa.com/xmlns/wsrr/directory']" -o $OUTDIR/WSRREXP_${LAMB}_B-UPDT_DIR_runon_${DELTADATA}_from_$current_big_export_ts.xml
+date "+%A %B %d %T %3N"
+echo 
+
+
+echo ---- Esecuzione Delta in $LAMB Query EXT $DELTADATA ----
+date "+%A %B %d %T %3N"
+echo EXT WSRREXP_${LAMB}_B-UPDT_EXT_runon_${DELTADATA}_from_$current_big_export_ts.xml
+curl -g --get $timeout "$AMBIENTE" --data-urlencode "query=/WSRR/GenericObject[@lastModified >= $delta_date and @namespace='http://www.bancaintesa.com/xmlns/wsrr/catalog_extns']" -o $OUTDIR/WSRREXP_${LAMB}_B-UPDT_EXT_runon_${DELTADATA}_from_$current_big_export_ts.xml
+date "+%A %B %d %T %3N"
+echo 
+
+
+echo 
+
+count_sospetti=$(grep '<html>' $OUTDIR/*_runon_${DELTADATA}_from_$current_big_export_ts.xml | wc -l)
+echo File sospetti $count_sospetti
+grep -r -i '<html>' $OUTDIR/*_runon_${DELTADATA}_from_$current_big_export_ts.xml
+
+count_ft=$(grep '<resource ' $OUTDIR/*FT_runon_${DELTADATA}_from_$current_big_export_ts.xml | wc -l)
+count_fcat=$(grep '<resource ' $OUTDIR/*CAT_runon_${DELTADATA}_from_$current_big_export_ts.xml | wc -l)
+count_dir=$(grep '<resource ' $OUTDIR/*DIR_runon_${DELTADATA}_from_$current_big_export_ts.xml | wc -l)
+count_ext=$(grep '<resource ' $OUTDIR/*EXT_runon_${DELTADATA}_from_$current_big_export_ts.xml | wc -l)
+echo Conteggio FT: $count_ft  CAT: $count_fcat DIR: $count_dir  EXT: $count_ext 
+
+echo Conteggio TOTALE: $(grep '<resource ' $OUTDIR/*_runon_${DELTADATA}_from_$current_big_export_ts.xml | wc -l)
+

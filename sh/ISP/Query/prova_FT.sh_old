@@ -1,0 +1,17 @@
+#!/bin/ksh
+export MS=$1
+export DATA=$2
+export RUNPATH=/oradata/ITT0/app/spOrchSuite/bin/runtime/WSRR/Utility/Query
+echo ########## FT ############
+date "+%A %B %d %T %3N"
+curl -g -vvvvvv --get "http://ixpwebservices.bancaintesa.it:9081/WSRR/7.0/Metadata/XML/GraphQuery" --data-urlencode "query=/WSRR/GenericObject[@lastModified > $MS and @namespace='http://www.bancaintesa.com/xmlns/wsrr/filetransfer']" -o $RUNPATH/Risultati/filetransfer_$DATA.txt
+date "+%A %B %d %T %3N"
+echo ########## Catalog ############
+date "+%A %B %d %T %3N"
+curl -g -vvvvvv --get "http://ixpwebservices.bancaintesa.it:9081/WSRR/7.0/Metadata/XML/GraphQuery" --data-urlencode "query=/WSRR/GenericObject[@lastModified > $MS and @namespace='http://www.bancaintesa.com/xmlns/wsrr/catalog']" -o $RUNPATH/Risultati/catalog_$DATA.txt
+date "+%A %B %d %T %3N"
+echo ########## Directory ############
+date "+%A %B %d %T %3N"
+curl -g -vvvvvv --get "http://ixpwebservices.bancaintesa.it:9081/WSRR/7.0/Metadata/XML/GraphQuery" --data-urlencode "query=/WSRR/GenericObject[@lastModified > $MS and @namespace='http://www.bancaintesa.com/xmlns/wsrr/directory']" -o $RUNPATH/Risultati/directory_$DATA.txt
+date "+%A %B %d %T %3N"
+echo ##########
