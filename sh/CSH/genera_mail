@@ -1,0 +1,192 @@
+#!/bin/csh
+#**************************************************************************
+#
+#                         genera_mail
+#
+# Goal: Preparare il testo delle mail da spedire attraverso il mailer.
+#
+# Parameters: $1 Tipo di Mail (INFO o ERRORE)
+#             $2 Codice Mail (Numero errore o numero task)
+#             $3 Parametro opzionale (lo user di Continuus per INFO)
+#
+# Author: Luca Brizzolara, November 2000
+#
+#**************************************************************************
+
+#**************************************************************************
+# Definizione variabili globali.
+#**************************************************************************
+set CCM51_DB = "$DBAREA/SELESTA
+
+set MAILER_DIR = "${CCM51_DB}/lib/notify/Unix"
+set MAILER_NAME = "sun_mail"
+set MAILER = "${MAILER_DIR}/${MAILER_NAME}"
+
+set MAIL_LOG_DIR = "${CCM51_DB}/lib/notify/Mail/log"
+
+DEST_DIR = ""${CCM51_DB}/lib/notify/Mail/Address"
+DEST_TABLE = "${DEST_DIR}/Destinatari.lst"
+
+set DEST_ERRORE = "manager.configuration@omnitel.it"
+#**************************************************************************
+# Controllo il numero dei parametri.
+#**************************************************************************
+if (($#argv != 3) && ($#argv != 4)) then
+  echo "USAGE: genera_mail TipoMail CodiceMail par1 par2"
+  exit 1
+endif
+set TIPO_MAIL = $1
+set PARAMETRO1 = $3
+if ($#argv != 3 ) then
+  set PARAMETRO2 = $4
+endif
+  
+
+#**************************************************************************
+# Controllo il valore del primo parametro.
+#**************************************************************************
+if ((${TIPO_MAIL} != "errore") && (${TIPO_MAIL} != "ERRORE") && (${TIPO_MAIL} != "info") && (${TIPO_MAIL} != "INFO")) then
+  echo "ERRORE: Il valore inserito per TipoMail non e' accettabile"
+  echo "I valori consentiti sono ERRORE e INFO"
+  echo "Operazione di preparazione mail fallita"
+  exit 2
+endif
+
+#**************************************************************************
+# Scrivo le mail per il caso di errore. Il sistema si basa sul valore
+# indicato come secondo parametro. Nel caso sia necessario inviare una
+# mail a fronte di un nuovo errore, scegliersi un numero non ancora usato,
+# settare un HEADER diverso se il default non va bene, settare il 
+# DESTINATARIO e scrivere il testo in MAIL_FILE. Basarsi sugli altri casi
+# per un esempio.
+#**************************************************************************
+if ((${TIPO_MAIL} == "errore") || (${TIPO_MAIL} == "ERRORE")) then
+  set CODICE_MAIL = $2
+  set MAIL_FILE = "${MAIL_LOG_DIR}/${CODICE_MAIL}Testo.txt"
+  set HEADER = "Attenzione: Errore in Continuus"
+  switch (${CODICE_MAIL})
+    case 2:
+      echo "Attenzione. Il tentativo di Startare l'automa non e' riuscito." > ${MAIL_FILE}
+      echo "Questo perche' le risorse dell'automa sono occupate ma esso non risulta funzionante." >> ${MAIL_FILE}
+      echo "Attivare la sessione di pulitura risorse automa e quindi provare a ristartare." >> ${MAIL_FILE}
+      echo "Controllare il log per verificare eventuali ulteriori problemi nella gestione delle risorse" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 3:
+      echo "L'automa non riesce a leggere la lista dei nuovi eventi." > ${MAIL_FILE}
+      echo "Probabilmente un evento di chiusura task si e' bloccato e non libera la risorsa." >> ${MAIL_FILE}
+      echo "Controllare il log per verificare eventuali ulteriori problemi nella gestione delle risorse" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 4:
+      echo "L'automa non riesce a leggere la lista dei nuovi eventi." > ${MAIL_FILE}
+      echo "La risorsa risulta libera ma l'automa non riesce ad allocarsela." >> ${MAIL_FILE}
+      echo "Controllare l'esistenza della directory dei flag e i suoi permessi." >> ${MAIL_FILE}
+      echo "Controllare il log per verificare eventuali ulteriori problemi nella gestione delle risorse" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 5:
+      echo "Il trigger non riesce ad accedere alla risorsa di scrittura degli eventi." > ${MAIL_FILE}
+      echo "Probabilmente un evento di chiusura task si e' bloccato e non libera la risorsa." >> ${MAIL_FILE}
+      echo "Controllare il log per verificare eventuali ulteriori problemi nella gestione delle risorse" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 6:
+      echo "Il trigger non riesce ad accedere alla risorsa di scrittura degli eventi." > ${MAIL_FILE}
+      echo "La risorsa risulta libera ma l'automa non riesce ad allocarsela." >> ${MAIL_FILE}
+      echo "Controllare l'esistenza della directory dei flag e i suoi permessi." >> ${MAIL_FILE}
+      echo "Controllare il log per verificare eventuali ulteriori problemi nella gestione delle risorse" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 13:
+      echo "L'automa in fase di startup ha rilevato un errore nella lettura del file di configurazione" > ${MAIL_FILE}
+      echo "La procedura di startup automa e' stata interrotta. Correggere l'errore e riprovare" >> ${MAIL_FILE}
+      echo "Controllare il log per verificare eventuali ulteriori problemi nella gestione delle risorse" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 14:
+      echo "La procedura di aggiornamento dei file per excel ha rilevato un errore" > ${MAIL_FILE}
+      echo "nella lettura del file di configurazione. Controllare il problema" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 20:
+      echo "La procedura di produzione del file contenenti l'elenco dei componenti" > ${MAIL_FILE}
+      echo "per il modulo ${PARAMETRO1} e' fallita perche' il file di configurazione contiene una riga" >> ${MAIL_FILE}
+      echo "per il modulo in questione ma senza nessun elemento da considerare." >> ${MAIL_FILE}
+      echo "La procedura e' giunta quindi al termine senza migrare alcun file in Continuus." >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 21:
+      echo "La procedura di produzione del file contenenti l'elenco dei componenti" > ${MAIL_FILE}
+      echo "per il modulo ${PARAMETRO1} ha avuto problemi poiche' il file ${PARAMETRO2}" >> ${MAIL_FILE}
+      echo "contiene una versione non esistente o scorretta" >> ${MAIL_FILE}
+      echo "La procedura e' stata comunque completata" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 22:
+      echo "La procedura di produzione del file contenenti l'elenco dei componenti" > ${MAIL_FILE}
+      echo "per il modulo ${PARAMETRO1} ha avuto problemi perche' non e' stato possibile determinare" >> ${MAIL_FILE}
+      echo "la versione in uso per ${PARAMETRO2}. E' stata presa l'ultima versione." >> ${MAIL_FILE}
+      echo "La procedura e' stata comunque completata" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 23:
+      echo "La procedura di produzione del file contenenti l'elenco dei componenti" > ${MAIL_FILE}
+      echo "per il modulo ${PARAMETRO1} ha avuto problemi perche' non e' stato possibile determinare" >> ${MAIL_FILE}
+      echo "la versione in uso per ${PARAMETRO2} in quanto non esiste una versione di ${PARAMETRO2}" >> ${MAIL_FILE}
+      echo "in stato prep, test, sqa o released." >> ${MAIL_FILE}
+      echo "La procedura e' stata comunque completata" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 24:
+      echo "La procedura di produzione del file contenenti l'elenco dei componenti" > ${MAIL_FILE}
+      echo "per il modulo ${PARAMETRO1} ha avuto problemi perche' non e' possibile allocarsi" >> ${MAIL_FILE}
+      echo "la risorsa per la migrate costituita dal file ${PARAMETRO2}" >> ${MAIL_FILE}
+      echo "La procedura e' in attesa da 20 minuti" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+    case 25:
+      echo "La procedura di produzione del file contenenti l'elenco dei componenti" > ${MAIL_FILE}
+      echo "per il modulo ${PARAMETRO1} ha avuto problemi. Per un progetto ha utilizzato" >> ${MAIL_FILE}
+      echo "il valore di versione contenuto nel file ${PARAMETRO2}" >> ${MAIL_FILE}
+      echo "La procedura e' stata comunque completata" >> ${MAIL_FILE}
+      set DESTINATARIO = ${DEST_ERRORE}
+      breaksw
+#    case 5:
+#      echo "Testo mail" > ${MAIL_FILE}
+#      set DESTINATARIO = ${DEST_ERRORE}
+#      breaksw
+    default:
+      echo "ERRORE: Il codice inserito non e' riconosciuto"
+      echo "Operazione di preparazione mail non eseguita"
+      exit 3
+      endsw
+  endsw
+endif
+
+#**************************************************************************
+# Mando la mail per informare un utente di un nuovo task. Il secondo
+# parametro e' il numero del task creato, il tesro e' lo user Continuus
+# a cui il task creato e' stato assegnato e il cui indirizzo viene cercato
+# in tabella.
+#**************************************************************************
+if ((${TIPO_MAIL} == "info") || (${TIPO_MAIL} == "INFO")) then
+  set HEADER = "Nuova attivita' in Continuus"
+  set TASK_NUMBER = $2
+  set CM_USER = $3
+  if (`grep "\:${CM_USER}\:" ${DEST_TABLE} |wc -l` != 1) then
+    echo "ERRORE: L'utente destinatario della mail non e' corretto o"
+    echo "la sua identificazione e' ambigua"
+    echo "Operazione di preparazione mail non eseguita"
+    exit 4
+  else
+    set DESTINATARIO = `grep "\:${CM_USER}\:" ${DEST_TABLE} |awk '{ print $2 }'`
+  endif
+  set MAIL_FILE = "${MAIL_LOG_DIR}/${TASK_NUMBER}Testo.log"
+  echo "E' stata aperta l'attivita' numero ${TASK_NUMBER} per l'utente ${CM_USER}" > ${MAIL_FILE}
+  echo " " >> ${MAIL_FILE}
+  echo "Ufficio CM" >> ${MAIL_FILE}
+endif
+
+${MAILER} ${HEADER} ${DESTINATARIO} ${MAIL_FILE}
+

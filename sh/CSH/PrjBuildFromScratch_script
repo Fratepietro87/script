@@ -1,0 +1,43 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* IBM AIX CSHELL Script for COMIT Consegne. DB Build 
+#*
+#* Author: Cavana Carlo 1998
+#*
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CNF_DIR = "${CCM45_DB}/lib/notify/cnf"
+
+set fnd = `cat ${CNF_DIR}/Project.lst`
+set fndnum = `echo $#fnd`
+set i = 0
+
+ccm status > ${CNF_DIR}/OutProj.lst
+
+if !(`grep -c "Continuus/CM sessions for user ccm_root" ${CNF_DIR}/OutProj.lst`) then
+  echo .ERRORE.
+  echo ........ Utente ccm_root inesistente........
+  echo ........ Attivare una sessione Continuus/CM:
+  echo ........ User:ccm_root,      Role:ccm_admin.
+  echo .
+  exit 1
+endif
+
+ccm set role ccm_admin
+
+ccm query -t project -u -f %name > ${CNF_DIR}/OutProj.lst 
+
+while ($i < ${fndnum})
+    @ i++
+ if !(`echo $fnd[$i] | xargs -i grep -c {} ${CNF_DIR}/OutProj.lst`) then
+   echo Creo il Progetto ${fnd[$i]} ..........
+   echo ${fnd[$i]} | xargs -i ${EXE_DIR}/PrjSchelDB_script {}
+ else
+   echo Progetto ${fnd[$i]} esistente
+ endif
+end
+
+rm ${CNF_DIR}/OutProj.lst

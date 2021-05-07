@@ -1,0 +1,47 @@
+#!/bin/csh
+#***************************************************************************
+#
+#                      CrontabPack_script
+#
+# Goal: Lanciare la script per il pack del database di $1.
+#       Solo root e ccm_root possono eseguire questa script.
+#       Nel caso venga usata questa script da crontab Unix, e' consigliabile
+#       salvare in un file di log sia stdout che stderr
+#
+#                
+#***************************************************************************
+set SCRIPT_PATH = "/ccm_users/Script_Dir"
+set SCRIPT_NAME = "CM_Pack_script"
+set EX_SCRIPT = "${SCRIPT_PATH}/${SCRIPT_NAME}"
+
+
+if !(-f ${EX_SCRIPT} ) then
+  echo "ERRORE: La script ${EX_SCRIPT} non e' esiste."
+  echo "Controllare la definizione delle variabili,"
+  echo "in particolare il valore di SCRIPT_PATH"
+  exit 1
+endif
+
+if ($#argv != 1) then
+  echo "Errore. il numero dei parametri passato non e' corretto"
+  echo "Usage: CrontabPack_script DB_NAME"
+  exit 1
+else
+  set DB_NAME = $1
+endif
+
+if (`whoami` == root ) then
+  echo "Lancio della script per il Pack del database ${DB_NAME}"
+  su - ccm_root -c ${EX_SCRIPT} ${DB_NAME}
+  echo "Fine Pack del database ${DB_NAME}"
+else
+  if (`whoami` != ccm_root) then
+    echo "Errore: solo root e ccm_root possono eseguire questa script"
+    exit 1
+  else
+    echo "Lancio della script per il Pack del database ${DB_NAME}"
+    ${EX_SCRIPT} ${DB_NAME}
+    echo "Fine Pack del database ${DB_NAME}"
+  endif
+endif
+exit 0

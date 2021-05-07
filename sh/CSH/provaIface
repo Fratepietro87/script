@@ -1,0 +1,65 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                      UpFldSWD_script
+#*
+#* Goal: Ricerca tra tutte le consegne quelle da estrarre (quelle che
+#*       nel loro file Delta non hanno la label $1_FOLDER_UPDATE). Una
+#*       trovatele, ne esamina prerequisiti e corequisiti. Per le
+#*       consegne che superano anche questo controllo, vengono ricercati
+#*       tutti i task ed inseriti nel folder del progetto di appartenenza
+#*       per l'ambiente per cui si fa l'estrazione. In seguito vengono
+#*       estratti e posti su fs tutti gli oggetti delle consegne e viene
+#*       richiamata la script che si occupa della distribuzione.
+#*
+#* Parameters: $1 Ambiente (SQA o PRD)
+#*             $2 Action (UpDate o LoopUpDate)
+#*             $3 Progetto (DTM, ... o Any)
+#*             $4 cod_opzione
+#*             $5 Numero Task
+#*
+#* Author: Luca Brizzolara 1999
+#*
+#***********************************************************************
+
+#***********************************************************************
+# Setto le variabili di ambiente
+#***********************************************************************
+
+set CMenv  = $1 
+set cmenv  = `echo $1 |awk '{print tolower($1)}'`
+set SWD_ROOT = "/usr/CONT_SRV/SWD_GPM"
+set IFACE_DIR = "${SWD_ROOT}/IFACE"
+set IFACE_REMOTE_DIR = "/u/iface/bin"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log"
+
+if (-d ${SWD_ROOT}/$1/u) then
+  if (-d ${IFACE_DIR}/$1 ) then
+    rm -rf ${IFACE_DIR}/$1
+    mkdir ${IFACE_DIR}/$1
+  endif
+
+
+  mv ${CCM45_DBlog}/interface.lst ${CCM45_DBlog}/interface.old
+  remsh c-gpm1-c -l dsim -n "ls ${IFACE_REMOTE_DIR}" > ${CCM45_DBlog}/interface.tmp
+  if (`cat ${CCM45_DBlog}/interface.tmp|wc -l` == 0 ) then
+    mv ${CCM45_DBlog}/interface.old ${CCM45_DBlog}/interface.lst
+  else
+    cat ${CCM45_DBlog}/interface.tmp|grep -v "\." > ${CCM45_DBlog}/interface.lst
+    rm ${CCM45_DBlog}/interface.tmp
+    if (`cat ${CCM45_DBlog}/interface.lst|wc -l` == 0 ) then
+      mv ${CCM45_DBlog}/interface.old ${CCM45_DBlog}/interface.lst
+    endif
+  endif
+
+  find ${SWD_ROOT}/$1 -type f|grep "/bin/"|awk -F"$1/" '{ print $2 }'|xargs ${EXE_DIR}/cpIFACE_script ${SWD_ROOT} $1 ${CCM45_DBlog}/interface.lst ${IFACE_DIR}
+endif
+
+
+#***********************************************************************
+# Start EXPORT from SWD_ROOT to next environment
+#***********************************************************************
+

@@ -1,0 +1,234 @@
+#!/bin/csh 
+
+#*****************************************************************************
+#
+#			DoMigHps_script.
+#
+#	Effettua la Migrazione in Continuus dei file descrittivi le migrazioni 
+#	HPS in Produzione.
+#
+#	Parametri:	$1=Migrazione HPS es.:HPS00277(8 caratteri)
+# 
+# 
+# Creator: Luciano Giovannini Marzo 2000 
+#*****************************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"                 
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"                 
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"              
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log" 
+set WA_ROOT = "/usr/CONT_SRV/ccm_wa/DB_FIL"                 
+set MIG_ROOT = "/usr/CONT_SRV/MIG_DB_FIL"             
+#set MIG_ROOT = "/Consegne/MIG_DB_FIL"             
+set resolver = "chk_sa"
+set consegna = $1
+set progetto = "HPS"
+set REL = `echo $1 | awk -F"HPS" '{print $2}'`
+set VER = `echo ${consegna} | awk '{print substr($1,1,5)}'`
+set DIRLIST = `ls ${MIG_ROOT}/${consegna}`
+
+#*****************************************************************************
+#
+# Controlli preventivi alla migrazione.
+#
+#*****************************************************************************
+
+if (`whoami` != ccm_root) then 
+  echo .                       
+  echo User MUST BE ccm_root...
+  echo .                       
+  exit 1                       
+endif
+
+if (-f ${CCM45_DBlog}/Mig.$progetto.LOCK) then 
+  echo "ATTENZIONE e' gia' in corso una migrazione del progetto $progetto ."                  
+  echo "Operazione Annullata. " 
+  echo "Migrazione HPS respinta. " >>&/$CCM45_DBlog/ErrMsg
+  exit 0                                                               
+endif                                                                         
+
+if (-f ${CCM45_DBlog}/Delta.${consegna}) then     
+  echo "Consegna ${consegna} gia' migrata ..." 
+  echo "Operazione Annullata. " 
+  echo "Migrazione  ${consegna} respinta." >>&/$CCM45_DBlog/ErrMsg
+  exit 0                                                               
+endif                                                                         
+
+set fnd = `ls -r ${CCM45_DBlog}/Delta.$progetto* | awk -F. '{print substr($2,4,5)}'` 
+									      
+if (`echo $fnd[1]` >= $REL) then
+
+  echo "Migrazione di ${consegna} NON consentita."         
+  echo "La Versione deve essere incrementale." >>&/$CCM45_DBlog/ErrMsg     
+  echo "Ultima versione valida in DB_FIL: $progetto$fnd[1]"
+  echo "Operazione Annullata. " 
+  echo "Migrazione ${consegna} respinta. " >>&/$CCM45_DBlog/ErrMsg
+  exit 0                                                               
+endif
+
+#remsh server-os2 conv_demo.cmd ${consegna} > ${CCM45_DBlog}/OS2Conv.Err
+remsh server-os2 converti.cmd ${consegna} > ${CCM45_DBlog}/OS2Conv.Err
+
+if (${status}) then                                                          
+  echo "La Consegna ${consegna} non e' corretta ... oppure"                      
+  echo "manca il collegamento con Server-os2 ... verificare RSHD di OS2."
+  echo "Operazione Annullata. " 
+  echo "Migrazione ${consegna} respinta. " >>&/$CCM45_DBlog/ErrMsg
+  exit 0                                                               
+endif                                                                         
+
+if !(-d ${MIG_ROOT}/${consegna}) then
+  echo "La Consegna ${consegna} non esiste ..." >>&/$CCM45_DBlog/ErrMsg 
+  echo "Operazione Annullata. " 
+  echo "Migrazione ${consegna} respinta. " >>&/$CCM45_DBlog/ErrMsg
+  exit 0                                                               
+endif                                                                         
+
+
+if (`grep -c SYS ${CCM45_DBlog}/OS2Conv.Err`) then       
+  echo "Errore SERVER-OS2."                          
+  echo "Verificare la procedura OS2 CONVERTI.CMD ..." >>&/$CCM45_DBlog/ErrMsg
+  echo "Operazione Annullata." 
+  echo "Migrazione ${consegna} respinta. " >>&/$CCM45_DBlog/ErrMsg
+  exit 0                                                               
+endif                                                                         
+
+# ********************************************************************** 
+# Verifica della Correttezza della consegna che deve contenere solo la
+# directory txt
+# ********************************************************************** 
+foreach DIR_LST (${DIRLIST})
+ if ( -d ${MIG_ROOT}/${consegna}/${DIR_LST} ) then
+   if ( ${DIR_LST} != "txt" ) then
+    echo "La consegna non e' corretta la directory ${DIR_LST} non e' prevista"
+    exit
+   endif
+ else
+   echo "La consegna non e' corretta i file HPS devono essere inseriti nella directory txt"
+   exit
+ endif
+
+# ********************************************************************** 
+# Check Ok. Creazione Tasks e Migrazione della Consegna HPS 
+# ********************************************************************** 
+
+echo "LOCK Migrazione ${consegna}" > ${CCM45_DBlog}/Mig.${progetto}.LOCK
+echo "Migrazione Consegna ${consegna} in CONTINUUS in corso ..." 
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}`
+
+set Task_Chkhps = `ccm create_task -s "Autorizzazione ${consegna} -> PRD" -r "${resolver}" -platform AIX-DB_FIL -release ${VER} -subsystem ${progetto}  | awk '{print ($2)}'`
+
+ccm query -t task -name task${Task_Chkhps}                          
+ccm attr -c comitver -t string -v "${REL}" @1          
+ccm attr -c cod_opzione -t string -v "CheckForHPS" @1
+ccm attr -m resolver -v " " @1              
+ccm work_area -wa -setpath ${WA_ROOT} ${progetto}~SQA
+
+ccm query "is_member_of('${progetto}~SQA:project:1')" -u -f "ccm relate -n associated_cv -from task$Task_Chkhps~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.${progetto}
+
+ccm migrate -d ${MIG_ROOT}/${consegna} -p ${progetto}~SQA -s sqa >> ${CCM45_DBlog}/Mig.$progetto.LOCK
+sync                                                                                
+
+ccm query "is_member_of('${progetto}~SQA:project:1')" -u -f "ccm relate -n associated_cv -from task$Task_Chkhps~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.${progetto}
+
+diff -b -e ${CCM45_DBlog}/BfrMig.${progetto} ${CCM45_DBlog}/AftMig.${progetto} | awk '/ {1,}/' > ${CCM45_DBlog}/Delta.${consegna} 
+
+ccm attr -c release -t string -v ${VER} `cat ${CCM45_DBlog}/Delta.${consegna} | awk -F" -to " '{print ($2)}'`
+
+if (${status})  then
+ ccm attr -m release -v ${VER} `cat ${CCM45_DBlog}/Delta.${consegna} | awk -F" -to " '{print ($2)}'`
+endif
+
+ccm attr -c platform -t string -v "AIX-DB_FIL" `cat ${CCM45_DBlog}/Delta.${consegna} | awk -F" -to " '{print ($2)}'`
+
+if (${status})  then
+  ccm attr -m platform -v "AIX-DB_FIL" `cat ${CCM45_DBlog}/Delta.${consegna} | awk -F" -to " '{print ($2)}'`
+endif
+
+source ${CCM45_DBlog}/Delta.${consegna}
+echo "Delta.${consegna} Created" >> ${CCM45_DBlog}/Mig.${progetto}.LOCK
+
+rm ${CCM45_DBlog}/AftMig.${progetto}
+rm ${CCM45_DBlog}/BfrMig.${progetto}
+
+echo "CSU_FOLDER_UPDATE" >> ${CCM45_DBlog}/Delta.${consegna}
+echo "SQA_FOLDER_UPDATE" >> ${CCM45_DBlog}/Delta.${consegna}
+
+# **********************************************************************
+# Set release table                                                     
+# **********************************************************************
+
+####################################################################
+# Salvo il valore del text_editor                                   
+####################################################################
+ccm set text_editor_orig "`ccm set text_editor`"
+
+####################################################################
+# Estraggo il contenuto dell'attributo release table                
+####################################################################
+ccm set text_editor "cat %filename > ${CCM45_DBlog}/${progetto}.tmp"
+ccm query -t admin -n base                                 
+ccm attr -m releases @1
+set jj = `grep ${VER} ${CCM45_DBlog}/${progetto}.tmp | awk '{print substr($1,1,5)}'`
+
+if ( ${VER} != $jj )  then
+  echo ${VER}:  ${VER} > ${CCM45_DBlog}/${progetto}.tmp
+  ccm set text_editor "cat ${CCM45_DBlog}/${progetto}.tmp >> %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+endif
+
+####################################################################
+# Sorto il contenuto della release table                            
+####################################################################
+
+ccm set text_editor "cat %filename > ${CCM45_DBlog}/${progetto}.tmp;sort ${CCM45_DBlog}/${progetto}.tmp > ${CCM45_DBlog}/${progetto}.tmp1;mv ${CCM45_DBlog}/${progetto}.tmp1 ${CCM45_DBlog}/${progetto}.tmp;cat ${CCM45_DBlog}/${progetto}.tmp > %filename"
+
+ccm query -t admin -n base
+ccm attr -m releases @1
+ccm set text_editor "`ccm set text_editor_orig`"
+ccm unset text_editor_orig
+
+rm ${CCM45_DBlog}/${progetto}.tmp
+
+#*******************************************************************
+# End Set release table 
+#*******************************************************************
+
+# **********************************************************************
+# Set associated release to the task  and Task Log.                                   
+# **********************************************************************
+set file_hps = `echo ${consegna} | awk '{print tolower($1)}'`
+set first_line = `head -n 1 ${MIG_ROOT}/${consegna}/txt/${file_hps}.txt`
+set secnd_line = `head -n 2 ${MIG_ROOT}/${consegna}/txt/${file_hps}.txt| tail -n 1`
+#set Description = "${first_line}\n${secnd_line}"
+set Description = "`head -2 ${MIG_ROOT}/${consegna}/txt/${file_hps}.txt`"
+
+ccm query -t task -name task${Task_Chkhps}   
+ccm attr -m release -v ${VER} @1 
+ccm attr -m resolver -v chk_sa @1
+
+ccm attr -c task_description -t string -v "${Description}" @1  
+if (${status}) then                                     
+  ccm attr -m task_description -v "${Description}" @1          
+endif                                                    
+
+echo "Release ${VER} associated to task${Task_Chkhps}" >> ${CCM45_DBlog}/Mig.${progetto}.LOCK
+
+
+#*********************************************************************
+# Creazione Task per cm_sesi
+#*********************************************************************
+
+set Task_Sesihps = `ccm create_task -s "Autorizzazione alla distribuzione in PRD di ${consegna}" -r "cm_sesi" -platform AIX-DB_FIL -release ${VER} -subsystem ${progetto}  | awk '{print ($2)}'`
+
+ccm query -t task -name task$Task_Sesihps                          
+ccm attr -c comitver -t string -v "${REL}" @1        
+ccm attr -c cod_opzione -t string -v "CheckForHPS" @1
+
+ccm stop                      
+			      
+rm ${CCM45_DBlog}/Mig.${progetto}.LOCK 
+
+exit 0

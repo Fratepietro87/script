@@ -1,0 +1,59 @@
+#!/bin/csh
+#***********************************************************************
+#  Create file .netrc_$1 in /usr/CONT_SRV/ccm45 (home dir for ccm_root)
+# 
+#  Author: Capanei Magda
+#  Date: April 1999
+# 
+#***********************************************************************
+
+set CCM45 = "/usr/CONT_SRV/ccm45"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_NTS"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+set RESPONSE_FILE = "$5/response.txt"
+
+#**************************************************
+# Input Parameter
+# $1 = AMBIENTE (CSU, SQA, PRD)
+# $2 = Directory sorgenti (gcf, oa_gs, gcf/modelli ...)
+# $3 = Directory di appoggio
+# $4 = directory sorgenti (/usr/CONT_SRV/SWD_NTS/CSU/notesdom)
+#**************************************************
+if ($#argv == 0 ) then
+  echo "ERRORE: Si devono passare gli argomenti" >> ${RESPONSE_FILE}
+  exit 0
+endif
+
+#**************************************************
+# Set Amb, Ip, Lg, Passwd reading from
+# ${SCRIPT_DIR}/LoginPasswd file,
+# contains respectivety:
+# the ambient (SQA, PRD, ...), hosts address
+# (10.0.1.124, ...), user (lncol02, lnprd02, ...) and password
+# (lncol02, lnprd02, ...)
+#**************************************************
+
+set Amb=`cat ${SCRIPT_DIR}/LoginPasswd | grep $1 | awk '{print $1}'`
+if (${Amb} == "") then
+  echo "ERRORE:Nel file LoginPasswd manca l'ambiente" >> ${RESPONSE_FILE}
+  exit 0
+endif
+set Ip=`cat ${SCRIPT_DIR}/LoginPasswd | grep $1 | awk '{print $2}'`
+set Lg=`cat ${SCRIPT_DIR}/LoginPasswd | grep $1 | awk '{print $3}'`
+set Passwd=`cat ${SCRIPT_DIR}/LoginPasswd | grep $1 | awk '{print $4}'`
+
+#**************************************************
+# Create .netrc in ccm_root home directory
+#**************************************************
+echo "machine" $Ip "login" $Lg "password" $Passwd > ${CCM45}/.netrc
+echo "macdef init" >> ${CCM45}/.netrc
+echo "cd" ""$3"/"$2 >> ${CCM45}/.netrc
+echo "lcd" $4"/"$2 >> ${CCM45}/.netrc
+echo "bi" >> ${CCM45}/.netrc
+echo "mput *.*" >> ${CCM45}/.netrc
+echo "quit" >> ${CCM45}/.netrc
+echo "" >> ${CCM45}/.netrc
+
+chown ccm_root:ccm_root ${CCM45}/.netrc
+chmod g-rwx ${CCM45}/.netrc
+chmod o-rwx ${CCM45}/.netrc

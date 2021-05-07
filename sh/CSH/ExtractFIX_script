@@ -1,0 +1,58 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    ExtractFIX_script
+#*
+#* Goal: deve far partire (o ripartire l'estrazione); e' comandato dal
+#*       trigger
+#*
+#* Parameters: $1  cod_opzione
+#*             $2  task_subsys
+#*             $3  comitver
+#*             $4  task_number
+#*             $5  task_synopsis
+#*             $6  creator
+#*             $7  resolver
+#*
+#* Author: Luca Brizzolara 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Controllo cod_opzione
+# **********************************************************************
+
+if !(($1 == "Estraz.fix")&&($6 == "chk_dtm")) then
+  exit 0
+endif
+
+# **********************************************************************
+# Setto le variabili di ambiente
+# **********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+
+# **********************************************************************
+#  Esecuzione controlli correttezza formale.
+# **********************************************************************
+
+if (-f ${CCM45_DBlog}/SWD_UPDATE.FIX.LOCK) then
+  echo "MSG:ERRORE. Estrazione SW FIX in Corso"
+  echo "- ERRORE - Estrazione SW FIX in corso." >>&/$CCM45_DBlog/ErrMsg
+  exit 1
+endif
+
+
+# **********************************************************************
+# I controlli hanno dato tutti esito positivo. Parte UpFldFix_script
+# con sessione di back_ground
+# **********************************************************************
+
+echo "MSG:  "
+echo "MSG: Iniziata operazione di estrazione per $2$3"
+echo "MSG:  "
+
+cat /dev/null > ${CCM45_DBlog}/SWD_UPDATE.FIX.LOCK
+${EXE_DIR}/UpFldFix_script $1 $2 $3 $4 $5 $6 $7 &

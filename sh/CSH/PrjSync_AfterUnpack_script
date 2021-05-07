@@ -1,0 +1,23 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* IBM AIX CSHELL Script for COMIT Consegne. DB Build 
+#*
+#* Author: Cavana Carlo 1998
+#*
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CNF_DIR = "${CCM45_DB}/lib/notify/cnf"
+
+set fnd = `cat ${CNF_DIR}/Project.lst`
+set fndnum = `echo $#fnd`
+set i = 0
+
+while ($i < ${fndnum})
+  @ i++
+  ccm sync -p ${fnd[$i]}~MIG
+  ccm sync -p ${fnd[$i]}~CSU
+  ccm sync -p ${fnd[$i]}~SQA
+  ccm sync -p ${fnd[$i]}~PRD
+end

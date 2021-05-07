@@ -1,0 +1,747 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                       CloseMig_Datamat
+#*
+#*
+#* Goal: lo scopo e' di migrare all'interno di CONTINUUS gli eseguibili
+#*       ricompilati. Nel caso di Patch si migrano gli oggetti contenuti
+#*       in una lista, mentre nel caso di Baseline si rimigra tutto il
+#*       software (sara' CONTINUUS a ricercare il delta ed inglobarlo).
+#*       Lo script lanciata tramite trigger al check-in del task di
+#*       migrazione.
+#*
+#* Parameters: $1 cod_opzione
+#*             $2 task_subsys
+#*             $3 comitver
+#*             $4 task_number
+#*             $5 task_synopsis
+#*             $6 creator
+#*             $7 resolver
+#*             $8 prerequisiti
+#*             $9 corequisiti
+#*
+#* Created by: Luca Brizzolara October 1999
+#*
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set WA_ROOT = "/usr/CONT_SRV/ccm_wa/DB_GPM"
+set MIG_ROOT = "/usr/CONT_SRV/CONT_GPM"
+set MIG_LOCAL_ROOT = "/usr/CONT_SRV/MIG_DB_GPM"
+set SQL_LOCAL_DIR = "${MIG_ROOT}/SQL/u/dsim"
+set SISO_REMOTE_SQL_DIR = "/u/dsim/sql"
+set SISO_REMOTE_MOUNT_DIR = "/usr/local/Continuus_SQL/sql"
+set BASE_LOCAL_SCRIPT_DIR = "/usr/local/gpm1scr"
+set LISTA_DIR = "${BASE_LOCAL_SCRIPT_DIR}/LISTE"
+set LOCAL_SCRIPT_DIR = "${BASE_LOCAL_SCRIPT_DIR}/SCRIPT"
+set LAST_PATCH_TABELLA = "${EXE_DIR}/LAST_PATCH_NUMBER"
+set PROGETTO = $2
+set COMITVER = $3
+set NTask = $4
+
+#***********************************************************************
+# Controllo il codice opzione
+#***********************************************************************
+
+if !((($1 == "Compilaz.Baseline")||($1 == "Compilaz.Patch"))&&($6 == mig_dtm)) then
+  exit 0
+endif
+
+#***********************************************************************
+# Set Environment Vars
+#***********************************************************************
+
+set VER = `echo ${PROGETTO}${COMITVER} | awk '{print substr($1,1,5)}'`
+
+#***********************************************************************
+# Sezione di controlli
+#***********************************************************************
+if (-f ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK) then
+  echo "MSG:ATTENZIONE e' gia' in corso una migrazione per ${PROGETTO}"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata.Il Task ${NTask} rimane assegnato.Premere Close"
+  exit 1
+endif
+
+#***********************************************************************
+# Costruisco un'unica script che al suo interno descrimina a seconda
+# del valore di $1 se si tratti di una baseline o di una patch
+# Alcune parti sono comuni, mentre in altre ho un comportamento
+# differente a seconda del valore di codice opzione. Al termine della
+# costruzione di questa script la lancio permettendo all'utente di
+# scollegarsi. Lo script deve creare un task che assegna a chk_svi che
+# ha il compito di decidere quando effettivamente questa consegna e'
+# pronta per essere estratta per il collaudo.
+#***********************************************************************
+
+
+
+echo "LOCK Migrazione ${PROGETTO}${COMITVER}" > ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+cat > ${CCM45_DBlog}/DoMig.Baseline <<EndOfInput1
+
+#***********************************************************************
+# Cambio i permessi dei fil contenuti nella directory ${SISO_REMOTE_SQL_DIR}
+# per poter vuotare la directory stessa.
+#***********************************************************************
+remsh c-gpm1-c -l dsim -n "cd ${SISO_REMOTE_MOUNT_DIR}; cd .. ; chmod -R 666 sql"
+
+#***************************************************************************
+# Cancello la directory sql ed il suo contenuto.
+#***************************************************************************
+cd ${SQL_LOCAL_DIR}
+rm -r ./sql
+
+#***************************************************************************
+# Ricreo la directory sql, settandone a 777 i permessi.
+#***************************************************************************
+mkdir sql
+chmod 777 sql
+
+#***************************************************************************
+# Aggiorno il contenuto della directory SQL
+#***************************************************************************
+remsh c-gpm1-c -l dsim -n "cd ${SISO_REMOTE_SQL_DIR}; find . -type f -name '*.sql'|awk -F/ '{ print \$2 }' |grep '.sql'|cpio -dumpx ${SISO_REMOTE_MOUNT_DIR}"
+remsh c-gpm1-c -l dsim -n "cd ${SISO_REMOTE_SQL_DIR}; find . -type f -name '*.pls'|awk -F/ '{ print \$2 }' |grep '.pls'|cpio -dumpx ${SISO_REMOTE_MOUNT_DIR}"
+remsh c-gpm1-c -l dsim -n "cd ${SISO_REMOTE_SQL_DIR}; find . -type f -name '*.plb'|awk -F/ '{ print \$2 }' |grep '.plb'|cpio -dumpx ${SISO_REMOTE_MOUNT_DIR}"
+
+
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}\`
+
+ccm query -t task -name task${NTask}
+ccm attr -m resolver -v " " @1
+
+ccm work_area -wa -setpath ${WA_ROOT} ${PROGETTO}~SVI
+ccm work_area -wa -setpath ${WA_ROOT} SQL~SVI
+ccm work_area -wa -setpath ${WA_ROOT} SIS~SVI
+ccm work_area -wa -setpath ${WA_ROOT} SHE~SVI
+ccm work_area -wa -setpath ${WA_ROOT} FRM~SVI
+ccm work_area -wa -setpath ${WA_ROOT} FMX~SVI
+
+
+
+if ($1 == "Compilaz.Baseline") then
+#***************************************************************************
+# Migro programmi ed interfacce
+#***************************************************************************
+  ccm query "is_member_of(${PROGETTO}~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task${NTask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.${PROGETTO}
+  ccm migrate -d ${MIG_ROOT}/BIN -p ${PROGETTO}~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(${PROGETTO}~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task${NTask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.${PROGETTO}
+  set ElencoTask = "Task${NTask}"
+
+#***************************************************************************
+# Migro SQL
+#***************************************************************************
+  set VERS_SQL = \`echo SQL${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Sql = \`ccm create_task -s "Compilazione Baseline ${PROGETTO}${COMITVER}~Consegna SQL${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SQL} -subsystem SQL | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Sql}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "SVI" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(SQL~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sql}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SQL
+  ccm migrate -d ${MIG_ROOT}/SQL -p SQL~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(SQL~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sql}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SQL
+  ccm query -t task -name task\${Ntask_Sql}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Sql} -c "Task di riferimento: task${NTask}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Sql}"
+
+#***************************************************************************
+# Migro SHE
+#***************************************************************************
+  set VERS_SHE = \`echo SHE${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_She = \`ccm create_task -s "Compilazione Baseline ${PROGETTO}${COMITVER}~Consegna SHE${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SHE} -subsystem SHE | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_She}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "SVI" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(SHE~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_She}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SHE
+  ccm migrate -d ${MIG_ROOT}/SHE -p SHE~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(SHE~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_She}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SHE
+  ccm query -t task -name task\${Ntask_She}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_She} -c "Task di riferimento: task${NTask}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_She}"
+
+#***************************************************************************
+# Migro SISO
+#***************************************************************************
+  set VERS_SIS = \`echo SIS${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Sis = \`ccm create_task -s "Compilazione Baseline ${PROGETTO}${COMITVER}~Consegna SIS${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SIS} -subsystem SIS | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Sis}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "SVI" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(SIS~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sis}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SIS
+  ccm migrate -d ${MIG_ROOT}/SIS -p SIS~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(SIS~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sis}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SIS
+  ccm query -t task -name task\${Ntask_Sis}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Sis} -c "Task di riferimento: task${NTask}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Sis}"
+
+#***************************************************************************
+# Migro FRM
+#***************************************************************************
+  set VERS_FRM = \`echo FRM${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Frm = \`ccm create_task -s "Compilazione Baseline ${PROGETTO}${COMITVER}~Consegna FRM${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_FRM} -subsystem FRM | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Frm}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "SVI" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(FRM~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Frm}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.FRM
+  ccm migrate -d ${MIG_ROOT}/FRM -p FRM~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(FRM~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Frm}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.FRM
+  ccm query -t task -name task\${Ntask_Frm}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Frm} -c "Task di riferimento: task${NTask}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Frm}"
+
+#***************************************************************************
+# Migro FMX
+#***************************************************************************
+  set VERS_FMX = \`echo FMX${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Fmx = \`ccm create_task -s "Compilazione Baseline ${PROGETTO}${COMITVER}~Consegna FMX${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_FMX} -subsystem FMX | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Fmx}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "SVI" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(FMX~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Fmx}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.FMX
+  ccm migrate -d ${MIG_ROOT}/FMX -p FMX~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(FMX~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Fmx}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.FMX
+  ccm query -t task -name task\${Ntask_Fmx}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Fmx} -c "Task di riferimento: task${NTask}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Fmx}"
+
+#***************************************************************************
+# Preparo elenco consegne per settare corequisiti
+#***************************************************************************
+  set ElencoConsegne = "SQL${COMITVER} SIS${COMITVER} SHE${COMITVER} FRM${COMITVER} FMX${COMITVER}"
+else
+#***************************************************************************
+# Copio gli oggetti dalla loro sede originaria alla directory della consegna  
+# per migrare tutto in un colpo solo.
+#***************************************************************************
+  set versione = \`cat ${LOCAL_SCRIPT_DIR}/Config_file|grep "VER" |awk '{ print \$2 }'\`
+   set file_con_path = "${LISTA_DIR}/upd.lista.\${versione}"
+   if (-f \${file_con_path} ) then
+     cat \${file_con_path}|awk '{ print substr(\$1,3,length(\$1)-2) }' |xargs ${EXE_DIR}/cpPatch_script ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} ${MIG_ROOT}
+   endif
+   set file_con_path = "${LISTA_DIR}/fmx.lista.\${versione}"
+   if (-f \${file_con_path} ) then
+     cat \${file_con_path}|awk '{ print substr(\$1,3,length(\$1)-2) }' |xargs ${EXE_DIR}/cpPatch_scriptFMX ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} ${MIG_ROOT}
+   endif
+  if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/BIN) then
+    ccm query "is_member_of(${PROGETTO}~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task${NTask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.${PROGETTO}
+    ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/BIN -p ${PROGETTO}~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+    ccm query "is_member_of(${PROGETTO}~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task${NTask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.${PROGETTO}
+  endif
+  set ElencoTask = "task${NTask}"
+  set ElencoConsegne = ""
+#***************************************************************************
+# Se c'e', migro SQL
+#***************************************************************************
+  if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/SQL) then
+    set VERS_SQL = \`echo SQL${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+    set Ntask_Sql = \`ccm create_task -s "Compilazione Patch ${PROGETTO}${COMITVER}~Consegna SQL${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SQL} -subsystem SQL | awk '{print (\$2)}'\`
+    ccm query -t task -n task\${Ntask_Sql}
+    ccm attr -c comitver -t string -v ${COMITVER} @1
+    ccm attr -c cod_opzione -t string -v "SVI" @1
+    ccm attr -m resolver -v " " @1
+    ccm query "is_member_of(SQL~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sql}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SQL
+    ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/SQL -p SQL~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+    ccm query "is_member_of(SQL~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sql}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SQL
+    ccm query -t task -name task\${Ntask_Sql}
+    ccm attr -m resolver -v "cm_sesi" @1
+    ccm attr -m status -v "task_assigned" @1
+    ccm task -checkin \${Ntask_Sql} -c "Task di riferimento: task${NTask}"
+    set ElencoConsegne = "\${ElencoConsegne} SQL${COMITVER}"
+    set ElencoTask = "\${ElencoTask} task\${Ntask_Sql}"
+  endif
+
+#***************************************************************************
+# Migro SHE
+#***************************************************************************
+  if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/SHE) then
+    set VERS_SHE = \`echo SHE${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+    set Ntask_She = \`ccm create_task -s "Compilazione Patch ${PROGETTO}${COMITVER}~Consegna SHE${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SHE} -subsystem SHE | awk '{print (\$2)}'\`
+    ccm query -t task -n task\${Ntask_She}
+    ccm attr -c comitver -t string -v ${COMITVER} @1
+    ccm attr -c cod_opzione -t string -v "SVI" @1
+    ccm attr -m resolver -v " " @1
+    ccm query "is_member_of(SHE~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_She}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SHE
+    ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/SHE -p SHE~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+    ccm query "is_member_of(SHE~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_She}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SHE
+    ccm query -t task -name task\${Ntask_She}
+    ccm attr -m resolver -v "cm_sesi" @1
+    ccm attr -m status -v "task_assigned" @1
+    ccm task -checkin \${Ntask_She} -c "Task di riferimento: task${NTask}"
+    set ElencoConsegne = "\${ElencoConsegne} SHE${COMITVER}"
+    set ElencoTask = "\${ElencoTask} task\${Ntask_She}"
+  endif
+
+#***************************************************************************
+# Migro SISO
+#***************************************************************************
+  if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/SIS) then
+    set VERS_SIS = \`echo SIS${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+    set Ntask_Sis = \`ccm create_task -s "Compilazione Patch ${PROGETTO}${COMITVER}~Consegna SIS${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SIS} -subsystem SIS | awk '{print (\$2)}'\`
+    ccm query -t task -n task\${Ntask_Sis}
+    ccm attr -c comitver -t string -v ${COMITVER} @1
+    ccm attr -c cod_opzione -t string -v "SVI" @1
+    ccm attr -m resolver -v " " @1
+    ccm query "is_member_of(SIS~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sis}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SIS
+    ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/SIS -p SIS~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+    ccm query "is_member_of(SIS~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sis}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SIS
+    ccm query -t task -name task\${Ntask_Sis}
+    ccm attr -m resolver -v "cm_sesi" @1
+    ccm attr -m status -v "task_assigned" @1
+    ccm task -checkin \${Ntask_Sis} -c "Task di riferimento: task${NTask}"
+    set ElencoConsegne = "\${ElencoConsegne} SIS${COMITVER}"
+    set ElencoTask = "\${ElencoTask} task\${Ntask_Sis}"
+  endif
+
+#***************************************************************************
+# Migro FRM
+#***************************************************************************
+  if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/FRM) then
+    set VERS_FRM = \`echo FRM${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+    set Ntask_Frm = \`ccm create_task -s "Compilazione Patch ${PROGETTO}${COMITVER}~Consegna FRM${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_FRM} -subsystem FRM | awk '{print (\$2)}'\`
+    ccm query -t task -n task\${Ntask_Frm}
+    ccm attr -c comitver -t string -v ${COMITVER} @1
+    ccm attr -c cod_opzione -t string -v "SVI" @1
+    ccm attr -m resolver -v " " @1
+    ccm query "is_member_of(FRM~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Frm}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.FRM
+    ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/FRM -p FRM~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+    ccm query "is_member_of(FRM~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Frm}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.FRM
+    ccm query -t task -name task\${Ntask_Frm}
+    ccm attr -m resolver -v "cm_sesi" @1
+    ccm attr -m status -v "task_assigned" @1
+    ccm task -checkin \${Ntask_Frm} -c "Task di riferimento: task${NTask}"
+    set ElencoConsegne = "\${ElencoConsegne} FRM${COMITVER}"
+    set ElencoTask = "\${ElencoTask} task\${Ntask_Frm}"
+  endif
+
+#***************************************************************************
+# Migro FMX
+#***************************************************************************
+  if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/FMX) then
+    set VERS_FMX = \`echo FMX${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+    set Ntask_Fmx = \`ccm create_task -s "Compilazione Patch ${PROGETTO}${COMITVER}~Consegna FMX${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_FMX} -subsystem FMX | awk '{print (\$2)}'\`
+    ccm query -t task -n task\${Ntask_Fmx}
+    ccm attr -c comitver -t string -v ${COMITVER} @1
+    ccm attr -c cod_opzione -t string -v "SVI" @1
+    ccm attr -m resolver -v " " @1
+    ccm query "is_member_of(FMX~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Fmx}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.FMX
+    ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/FMX -p FMX~SVI -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+    ccm query "is_member_of(FMX~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Fmx}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.FMX
+    ccm query -t task -name task\${Ntask_Fmx}
+    ccm attr -m resolver -v "cm_sesi" @1
+    ccm attr -m status -v "task_assigned" @1
+    ccm task -checkin \${Ntask_Fmx} -c "Task di riferimento: task${NTask}"
+    set ElencoConsegne = "\${ElencoConsegne} FMX${COMITVER}"
+    set ElencoTask = "\${ElencoTask} task\${Ntask_Fmx}"
+  endif
+endif
+
+set DBL_FLAG = "N"
+if (-f ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} ) then
+  if (\`grep DBL_FLAG ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}|wc -l\` != 0) then
+    set DBL_FLAG = "Y"
+  endif
+endif
+
+if (-f ${CCM45_DBlog}/BfrMig.${PROGETTO}) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a DTM
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.${PROGETTO} ${CCM45_DBlog}/AftMig.${PROGETTO} |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  source ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.${PROGETTO}
+  rm ${CCM45_DBlog}/AftMig.${PROGETTO}
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/${PROGETTO}.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep ${VER} ${CCM45_DBlog}/${PROGETTO}.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( ${VER} != \$jj )  then
+    echo ${VER}:  ${VER} > ${CCM45_DBlog}/${PROGETTO}.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/${PROGETTO}.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/${PROGETTO}.tmp;sort ${CCM45_DBlog}/${PROGETTO}.tmp > ${CCM45_DBlog}/${PROGETTO}.tmp1;mv ${CCM45_DBlog}/${PROGETTO}.tmp1 ${CCM45_DBlog}/${PROGETTO}.tmp;cat ${CCM45_DBlog}/${PROGETTO}.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/${PROGETTO}.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+else
+  if (-f ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}) then
+    rm ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  endif 
+  touch ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+endif
+
+if (-f ${CCM45_DBlog}/BfrMig.SQL) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a SQL
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.SQL ${CCM45_DBlog}/AftMig.SQL |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.SQL${COMITVER}
+  source ${CCM45_DBlog}/Delta.SQL${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.SQL
+  rm ${CCM45_DBlog}/AftMig.SQL
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SQL.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_SQL} ${CCM45_DBlog}/SQL.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_SQL} != \$jj )  then
+    echo \${VERS_SQL}:  \${VERS_SQL} > ${CCM45_DBlog}/SQL.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/SQL.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SQL.tmp;sort ${CCM45_DBlog}/SQL.tmp > ${CCM45_DBlog}/SQL.tmp1;mv ${CCM45_DBlog}/SQL.tmp1 ${CCM45_DBlog}/SQL.tmp;cat ${CCM45_DBlog}/SQL.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/SQL.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+if (-f ${CCM45_DBlog}/BfrMig.SHE) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a SHE
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.SHE ${CCM45_DBlog}/AftMig.SHE |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.SHE${COMITVER}
+  source ${CCM45_DBlog}/Delta.SHE${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.SHE
+  rm ${CCM45_DBlog}/AftMig.SHE
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SHE.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_SHE} ${CCM45_DBlog}/SHE.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_SHE} != \$jj )  then
+    echo \${VERS_SHE}:  \${VERS_SHE} > ${CCM45_DBlog}/SHE.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/SHE.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SHE.tmp;sort ${CCM45_DBlog}/SHE.tmp > ${CCM45_DBlog}/SHE.tmp1;mv ${CCM45_DBlog}/SHE.tmp1 ${CCM45_DBlog}/SHE.tmp;cat ${CCM45_DBlog}/SHE.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/SHE.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+
+if (-f ${CCM45_DBlog}/BfrMig.SIS) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a SIS
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.SIS ${CCM45_DBlog}/AftMig.SIS |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.SIS${COMITVER}
+  source ${CCM45_DBlog}/Delta.SIS${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.SIS
+  rm ${CCM45_DBlog}/AftMig.SIS
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SIS.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_SIS} ${CCM45_DBlog}/SIS.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_SIS} != \$jj )  then
+    echo \${VERS_SIS}:  \${VERS_SIS} > ${CCM45_DBlog}/SIS.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/SIS.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SIS.tmp;sort ${CCM45_DBlog}/SIS.tmp > ${CCM45_DBlog}/SIS.tmp1;mv ${CCM45_DBlog}/SIS.tmp1 ${CCM45_DBlog}/SIS.tmp;cat ${CCM45_DBlog}/SIS.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/SIS.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+
+if (-f ${CCM45_DBlog}/BfrMig.FRM) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a FRM
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.FRM ${CCM45_DBlog}/AftMig.FRM |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.FRM${COMITVER}
+  source ${CCM45_DBlog}/Delta.FRM${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.FRM
+  rm ${CCM45_DBlog}/AftMig.FRM
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FRM.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_FRM} ${CCM45_DBlog}/FRM.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_FRM} != \$jj )  then
+    echo \${VERS_FRM}:  \${VERS_FRM} > ${CCM45_DBlog}/FRM.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/FRM.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FRM.tmp;sort ${CCM45_DBlog}/FRM.tmp > ${CCM45_DBlog}/FRM.tmp1;mv ${CCM45_DBlog}/FRM.tmp1 ${CCM45_DBlog}/FRM.tmp;cat ${CCM45_DBlog}/FRM.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/FRM.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+
+
+if (-f ${CCM45_DBlog}/BfrMig.FMX) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a FMX
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.FMX ${CCM45_DBlog}/AftMig.FMX |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.FMX${COMITVER}
+  source ${CCM45_DBlog}/Delta.FMX${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.FMX
+  rm ${CCM45_DBlog}/AftMig.FMX
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FMX.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_FMX} ${CCM45_DBlog}/FMX.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_FMX} != \$jj )  then
+    echo \${VERS_FMX}:  \${VERS_FMX} > ${CCM45_DBlog}/FMX.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/FMX.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FMX.tmp;sort ${CCM45_DBlog}/FMX.tmp > ${CCM45_DBlog}/FMX.tmp1;mv ${CCM45_DBlog}/FMX.tmp1 ${CCM45_DBlog}/FMX.tmp;cat ${CCM45_DBlog}/FMX.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/FMX.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+echo "Delta.${PROGETTO}${COMITVER} Created" >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+#***********************************************************************
+# Set dei corequisiti delle consegne
+#***********************************************************************
+set Cons_DTM = "${PROGETTO}${COMITVER}"
+set Coreq_x = ""
+set Coreq_DTM = "$9"
+
+foreach sub_prj (\$ElencoConsegne)
+ #if (\$Coreq_DTM == "" \$Control_DTM == 0) then
+ if (\$Coreq_DTM == "")  then
+    set Cor_sep = ""
+    set Coreq_DTM = "\$sub_prj\$Cor_sep\$Coreq_DTM"
+ else
+    set Cor_sep = ","
+    set Coreq_DTM = "\$sub_prj\$Cor_sep\$Coreq_DTM"
+ endif
+ 
+  foreach sub_prk (\$ElencoConsegne)
+   if (\$sub_prk == \$sub_prj) then
+    echo "skip" \$sub_prk
+   else
+    set Coreq_x = "\$sub_prk","\$Coreq_x"
+   endif
+  end
+
+   echo PREREQUISIT: >> ${CCM45_DBlog}/Delta.\$sub_prj
+   echo "COREQUISIT:"\$Coreq_x\$Cons_DTM | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.\$sub_prj
+
+   set Coreq_x = ""
+end
+
+echo PREREQUISIT:$8 | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+echo COREQUISIT:\$Coreq_DTM | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+#***********************************************************************
+# Setto l'attributo release del task e lo scrivo nella sinopsis
+#***********************************************************************
+
+ccm query -t task -n task${NTask}
+ccm attr -m release -v ${VER} @1
+
+ccm attr -m resolver -v $7 @1
+ccm attr -c task_description -t string -v "${PROGETTO}${COMITVER}~SVI" @1
+if (\${status}) then
+  ccm attr -m task_description -v "${PROGETTO}${COMITVER}~SVI" @1
+endif
+
+#***********************************************************************
+# Verifico se devo aprire task a dbl_dtm; nel caso di baseline lo
+# apro comunque.
+#***********************************************************************
+if ($1 == "Compilaz.Baseline") then
+  echo DBL_FLAG >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+else
+  if (\${DBL_FLAG} == "Y") then
+    echo DBL_FLAG >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  endif
+endif
+ 
+#***********************************************************************
+# Salvo il numero dell'ultima patch per la compilazione successiva.
+#***********************************************************************
+echo "PATCH_NUMBER ${COMITVER}" > ${LAST_PATCH_TABELLA}
+
+#***********************************************************************
+# Se necessario, creo il task a dbl_dtm.
+# Creo il task da assegnare a chk_svi che ha il compito di decidere
+# quando la consegna puo' essere estratta per il collaudo.
+#***********************************************************************
+if ( \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | grep -c DBL_FLAG\` ) then
+  set N = \`ccm create_task -s "Attività DBL. Check e/o Modifica degli oggetti Database di ${PROGETTO}${COMITVER}~SVI" -r dbl_dtm -platform HPUX-DB_GPM -release ${VER} -subsystem ${PROGETTO} | awk '{print (\$2)}'\`
+  ccm query -t task -name task\$N
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c task_description -t string -v "Task di riferimento: Task${NTask}" @1
+endif
+
+set NextTask = \`ccm create_task -s "Autorizzazione all'estrazione in collaudo per ${PROGETTO}${COMITVER}" -platform HPUX-DB_GPM -r chk_svi -release ${VER} -subsystem ${PROGETTO} | awk '{ print (\$2) }'\`
+ccm query -t task -n task\${NextTask}
+ccm attr -c comitver -t string -v ${COMITVER} @1
+ccm attr -c cod_opzione -t string -v "No_Action" @1
+ccm attr -c task_description -t string -v "Task di riferimento: \${ElencoTask}" @1
+ccm attr -m status -v task_assigned @1
+ccm attr -m cod_opzione -v "CheckForNextEnv" @1
+
+ccm stop
+
+rm ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+  
+  
+EndOfInput1
+
+#***********************************************************************
+# Run the Script.
+#***********************************************************************
+
+#source ${CCM45_DBlog}/DoMig.Baseline &
+

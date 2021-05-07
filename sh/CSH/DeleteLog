@@ -1,0 +1,35 @@
+#!/bin/csh
+########################################################################
+#
+#                DeleteLog
+#
+# Goal: Cancellare il file di log di OBJ_NAME
+#
+# Parameters: $1 Project_Name
+#             $2 Object Name
+#             $3 Object Version
+#             $4 Owner
+#             $5 DB_NAME
+#             $6 LOG_FILE
+#
+# Author: Luca Brizzolara, Jul 2001
+#
+########################################################################
+
+#**********************************************************************
+# Definizione delle variabili
+#**********************************************************************
+set OBJ_NAME = $1
+set OBJ_VERSION = $2
+set ISTANCE = $3
+set CCM51_DB = "/tst1/ccm_databases/SELESTA"
+set LOG_DIR = "${CCM51_DB}/lib/notify/log"
+set LOG_FILE = "${LOG_DIR}/${OBJ_NAME}${OBJ_VERSION}.${ISTANCE}_IDENT"
+
+#**********************************************************************
+# Se esiste il file di log lo cancello
+#**********************************************************************
+if (-f ${LOG_FILE} ) then
+  rm -f ${LOG_FILE}&
+endif
+

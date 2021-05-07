@@ -1,0 +1,32 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     ConvertiUnix
+#*
+#* Goal: convertire in lowcase directory e file nelle consegne
+#*
+#* Parametri passati:$1 MIG_ROOT (/usr/CONT_SRV/MIG_DB_FIL) 
+#*                   $2 Progetto
+#*                   $3 comitver
+#*
+#* Author: Luca Brizzolara 1999
+#*
+#***********************************************************************
+
+set base_root = $1/$2$3
+
+shift
+shift
+shift
+
+while ($#argv != 0)
+  if ($1 != ${base_root} ) then
+    set FileConPath = $1
+    set NomeFile = `echo ${FileConPath} |awk -F/ '{ n=split($0,A); print A[n] }'`
+    set NumSep = `echo ${FileConPath} |awk '{print gsub("/","",$1)}'`
+    set PathFile = `echo ${FileConPath}|cut -d/ -f1-${NumSep}`
+    set LowerName = `echo ${NomeFile} |awk '{ print tolower($1) }'`
+    mv ${PathFile}/${NomeFile} ${PathFile}/${LowerName}
+  endif
+  shift
+end

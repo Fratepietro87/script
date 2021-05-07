@@ -1,0 +1,101 @@
+#!/bin/csh
+#***********************************************************************
+#*                       AggiornaListaWsod
+#* 
+# $oggetto(minuscolo con Path) :$Progetto(Maiuscolo, tre lettere): $Attributo(maiuscolo)
+#* Goal: Controllare la correttezza della lista dei bnd. I codici di
+#*       ritorno sono:
+#*       0 - se tutto ok, se attributi cambiati.
+#*       1 - se tutto ok ma con attributi cambiati.
+#*       2 - se un oggetto nella lista ' gia' stato dichiarato per wsod 
+#*           per un altro progetto.
+#*
+#* Parametri passati:$1 MIG_LOCAL_ROOT (Directory dove si trovano le consegne)
+#*                   $2 LOG_FILE (dove mettere il nome del bnd mancante nella lista)
+#*                   $3 Nome del progetto
+#*                   $4 Numero della consegna
+#* 
+#* Autore: Luca Brizzolara - Apr 2000
+#* 
+#***********************************************************************
+
+set MIG_LOCAL_ROOT = $1
+set CCM45_DBlog = $2
+set PROGETTO = $3
+set COMITVER = $4
+set LOG_FILE = $5
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+set ListaDeltaWSOD = "${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${progetto}${COMITVER}.wsd"
+set ListaAmbiente = "${CCM45_DBlog}/WSOD.MIG"
+set ListaDeltaTemp = "${CCM45_DBlog}/wsod_delta.mig"
+
+if ( -f ${LOG_FILE} ) then
+  rm ${LOG_FILE}
+endif
+
+if ( -f ${ListaDeltaTemp} ) then
+  rm ${ListaDeltaTemp}
+endif
+
+cp ${ListaAmbiente} ${ListaAmbiente}.old
+
+if ( -f ${ListaDeltaWSOD} ) then
+  cat ${ListaDeltaWSOD} |grep -v "ghost" |grep -v "GHOST"|grep -v "#"|grep -E "PRI|PUB" > ${ListaDeltaTemp}
+  set numero_linee = `cat ${ListaDeltaTemp} |wc -l`
+  set j = 0
+  while ($j < ${numero_linee})
+    @ j++
+    set linea = `head -n $j ${ListaDeltaTemp}|awk '{ print toupper($0)}'`
+    if (`echo ${linea} |grep -E "PRI|PUB"|wc -l` != 0 ) then
+      set oggetto = `head -n $j ${ListaDeltaTemp}| tail -n 1 |awk '{ gsub("\\\\","\/"); print tolower($1) }'`
+      set Attributo = `head -n $j ${ListaDeltaTemp}| tail -n 1 |awk '{ print toupper($2) }'`
+      set LunghezzaAttributo = `echo ${Attributo} |awk '{ print  length($0) }'`
+      if (${LunghezzaAttributo} != 3 ) then
+        set Attributo = `echo ${Attributo} |awk '{ print substr($1,1,length($1)-1) }'`
+      endif
+      if (`cat ${ListaAmbiente} |grep -v ":${PROGETTO}:"|grep "${oggetto} " |wc -l` != 0) then
+        set AltroProgetto = `grep "${oggetto} " ${ListaAmbiente} |grep -v ":${PROGETTO}:" |awk -F: '{ print $2 }'`
+        if (${AltroProgetto} != XXX) then
+          mv ${ListaAmbiente}.old ${ListaAmbiente}
+	  echo "${AltroProgetto} ${oggetto}" > ${LOG_FILE}
+	  exit 2
+        else
+          if (${Attributo} != PUB) then
+            set OldAttr = `cat ${ListaAmbiente} |grep -v ":${PROGETTO}:"|grep "${oggetto} " |awk '{ print $3 }'`
+            if (${OldAttr} != ${Attributo} ) then
+              echo "${oggetto} ${OldAttr} ${Attributo}" >> ${LOG_FILE}
+            endif
+            cat ${ListaAmbiente} |grep -v "${oggetto} " > ${ListaAmbiente}.temp
+            if (${Attributo} != PUB) then
+              echo "${oggetto} :${PROGETTO}: ${Attributo}" >> ${ListaAmbiente}.temp
+            endif
+            mv ${ListaAmbiente}.temp ${ListaAmbiente}
+          endif
+        endif
+      else
+        if (`cat ${ListaAmbiente} |grep ":${PROGETTO}:"|grep "${oggetto} " |wc -l` != 0) then
+          if (${Attributo} != PUB) then
+            set OldAttr = `cat ${ListaAmbiente} |grep ":${PROGETTO}:"|grep "${oggetto} " |awk '{ print $3 }'`
+            if ( ${OldAttr} != ${Attributo} ) then
+              echo "${oggetto} ${OldAttr} ${Attributo}" >> ${LOG_FILE}
+              cat ${ListaAmbiente} |grep -v "${oggetto} " > ${ListaAmbiente}.temp
+              if (${Attributo} != PUB) then
+                echo "${oggetto} :${PROGETTO}: ${Attributo}" >> ${ListaAmbiente}.temp
+              endif
+              mv ${ListaAmbiente}.temp ${ListaAmbiente}
+            endif
+          endif
+        else
+          if (${Attributo} != PUB) then
+            echo "${oggetto} :${PROGETTO}: ${Attributo}" >> ${ListaAmbiente}
+          endif
+        endif
+      endif
+    endif
+  end
+  if (-f ${LOG_FILE} ) then
+    exit 1
+  endif
+endif
+
+exit 0

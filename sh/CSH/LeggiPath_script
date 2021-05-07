@@ -1,0 +1,149 @@
+#!/bin/csh
+########################################################################
+#
+#                LeggiPath_script
+#
+# Goal: Vado a prendere dal server il file contenente il PATH dell'oggetto
+#       Modificato in data 31/7/2001; nel caso la versione sia 1, 1.1 o 2.1
+#       (versioni ipotizzabile come versione iniziale di un oggetto nuovo)
+#       invece di copiare il file contenente il PATH lo si deve creare.
+#       Questo perche' con gli oggetti nuovi il CercaPath_script non
+#       funziona.
+#
+# Parameters: $1 Project Name
+#             $2 Object Name
+#             $3 Object Version
+#             $4 Object Owner
+#             $5 DB_NAME
+#             $6 Object Type
+#             $7 Istanza
+#             $8 LOG_FILE
+#
+# Author: Luca Brizzolara, Jan 2001
+# Modified: Luca Brizzolara, July 2001
+#
+########################################################################
+
+#**********************************************************************
+# Definizione delle variabili
+#**********************************************************************
+set PROJECT_NAME = $1
+set OBJ_NAME = $2
+set OBJ_VERSION = $3
+set OBJ_OWNER = $4
+set CCM51_DB = $5
+set TYPE = $6
+set ISTANCE = $7
+set LOG_FILE = $8
+set LOG_REMOTE_PATH = "${CCM51_DB}/lib/notify/log"
+set LOG_REMOTE_FILE = "${LOG_REMOTE_PATH}/${OBJ_NAME}${OBJ_VERSION}.${ISTANCE}_IDENT"
+
+
+#**********************************************************************
+# Mi metto in un ciclo di attesa nel caso il processo di creazione
+# del file remoto non sia ancora terminato. Questo funzionamento viene
+# utilizzato solo per oggetti non nuovi (coie'con versioni diverse da
+# 1, 1.1 e 2.1
+#**********************************************************************
+if ((${OBJ_VERSION} != 1) && (${OBJ_VERSION} != 1.1) && (${OBJ_VERSION} != 2.1)) then
+  set WAIT = 0
+  set TENTATIVI = 0
+  while (${WAIT} == 0)
+    cp ${LOG_REMOTE_FILE} ${LOG_FILE}
+    if !(-f ${LOG_FILE} ) then
+      @ TENTATIVI++
+      if (${TENTATIVI} != 3) then
+        sleep 2
+      else
+        set WAIT = 1
+      endif
+    else
+      set WAIT = 1
+    endif
+  end
+#**********************************************************************
+# se non riesco a copiarlo, esco con condizione di errore
+#**********************************************************************
+  if (${TENTATIVI} == 3 ) then
+    exit 1
+  else
+    exit 0
+  endif
+endif
+
+
+#**********************************************************************
+# Se arrivo qui significa che la versione e' una delle tre censite
+# come versione di un oggetto nuovo. Provo comunque la copia perche'
+# potrei aver comiciato da una versione differente.
+#**********************************************************************
+set WAIT = 0
+set TENTATIVI = 0
+while (${WAIT} == 0)
+  cp ${LOG_REMOTE_FILE} ${LOG_FILE}
+  if !(-f ${LOG_FILE} ) then
+    @ TENTATIVI++
+    if (${TENTATIVI} != 3) then
+      sleep 2
+    else
+      set WAIT = 1
+    endif
+  else
+    set WAIT = 1
+  endif
+end
+
+#**********************************************************************
+# se non riesco a copiarlo, provo a calcolarmelo.
+#**********************************************************************
+if (${TENTATIVI} != 3 ) then
+  exit 0
+endif
+
+set BATCH_FILE = "${LOG_FILE}_temp"
+
+cat > ${BATCH_FILE} <<EndOfInput
+#**********************************************************************
+# Start sessione di Continuus per l'utente che sta lavorando
+#**********************************************************************
+sleep 3
+setenv CCM_ADDR \`ccm start -m -q -h omis123 -nogui -r developer -d ${CCM51_DB} -u $HOME/tmp -rc\`
+
+#**********************************************************************
+# Ricerco il progetto in cui c'e' l-oggetto (e' la wa dell'utente)
+# e ne trovo il wa_path
+#**********************************************************************
+ccm query "cvtype='project' and name='${PROJECT_NAME}' and has_member('${OBJ_NAME}-${OBJ_VERSION}:${TYPE}:${ISTANCE}')"
+set WA_PATH = \`ccm attr -s wa_path @1\`
+
+#**********************************************************************
+# Cerco il path relativo del file nel progetto
+#**********************************************************************
+set NAME = \`ccm attr -s name @1\`
+set VERSION = \`ccm attr -s version @1\`
+set RELATIVE_PATH = \`ccm finduse ${OBJ_NAME}-${OBJ_VERSION}:${TYPE}:${ISTANCE}|grep "\${NAME}-\${VERSION}"|awk -F@ '{ print \$1 }' |nawk -F"${OBJ_NAME}\-${OBJ_VERSION}" '{ print \$1 }'\`
+
+#**********************************************************************
+# Restituisco nel file il path dell'oggetto.
+#**********************************************************************
+set FILE_PATH = "\${WA_PATH}/\${RELATIVE_PATH}"
+echo \${FILE_PATH} > ${LOG_FILE}
+
+ccm stop
+
+rm -f ${BATCH_FILE}&
+EndOfInput
+
+source ${BATCH_FILE}&
+
+set WAIT = 0
+while (${WAIT} == 0)
+  if (-f ${BATCH_FILE} ) then
+    sleep 2
+  else
+    set WAIT = 1
+  endif
+end
+
+
+

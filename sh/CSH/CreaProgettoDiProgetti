@@ -1,0 +1,36 @@
+#!/bin/csh 
+set CCMDB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set WA_ROOT = "/usr/CONT_SRV/ccm_wa/DB_GPM"
+set PROJ = "Progetti_DB_GPM"
+if ( `whoami` != cm_sesi ) then
+  echo "Utente non abilitato"
+  exit 1
+endif
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr -d ${CCMDB}`
+
+ccm create -t project ${PROJ}~SVI
+ccm work_area -nwa -setpath ${WA_ROOT} ${PROJ}~SVI
+ccm query -t project -n ${PROJ} -v SVI
+ccm attr -c platform -t string -v HPUX-DB_GPM @1
+ccm attr -m baseline -v "${PROJ}~SVI" @1
+ccm ci -c "Ambiente di sviluppo DB_GPM" -p ${PROJ}~SVI -s prep
+ccm ci -c "Versione Iniziale" -p ${PROJ}~SVI -source -ss checkpoint
+
+ccm create -t project ${PROJ}~SQA
+ccm work_area -nwa -setpath ${WA_ROOT} ${PROJ}~SQA
+ccm query -t project -n ${PROJ} -v SQA
+ccm attr -c platform -t string -v HPUX-DB_GPM @1
+ccm attr -m baseline -v "${PROJ}~SQA" @1
+ccm ci -c "Ambiente di sviluppo DB_GPM" -p ${PROJ}~SQA -s prep
+ccm ci -c "Versione Iniziale" -p ${PROJ}~SQA -source -ss checkpoint
+
+ccm create -t project ${PROJ}~PRD
+ccm work_area -nwa -setpath ${WA_ROOT} ${PROJ}~PRD
+ccm query -t project -n ${PROJ} -v PRD
+ccm attr -c platform -t string -v HPUX-DB_GPM @1
+ccm attr -m baseline -v "${PROJ}~PRD" @1
+ccm ci -c "Ambiente di sviluppo DB_GPM" -p ${PROJ}~PRD -s prep
+ccm ci -c "Versione Iniziale" -p ${PROJ}~PRD -source -ss checkpoint
+
+ccm stop

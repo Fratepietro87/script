@@ -1,0 +1,37 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    cpCCMfl_consegna
+#*
+#* Goal: Creare la lista CONSEGNA.txt contenente ls -l della consegna
+#*       originaria. Il file viene posto nella consegna sotto la 
+#*       directory txt che creo nel caso non sia esistente.
+#*
+#* Parametri passati: $1 MIG_LOCAL_ROOT
+#*                    $2 MIG_ROOT
+#*                    $3 PROGETTO
+#*                    $4 COMITVER
+#*                    $... elenco di file contenuti nella consegna.
+#*
+#*
+#* Author: Luca Brizzolara, Apr 2000
+#*
+#***********************************************************************
+
+set root_dest = $1
+set root_src = $2
+set progetto = $3
+set comitver = $4
+shift
+shift
+shift
+shift
+if !(-d ${root_dest}/${progetto}${comitver}/txt ) then
+  mkdir ${root_dest}/${progetto}${comitver}/txt
+endif
+#cd ${root_src}
+while ($#argv != 0)
+  remsh linux_cm -l root -n "cd ${root_src};  ls -l $1 |cut -c32-1000" >> ${root_dest}/${progetto}${comitver}/txt/${progetto}${comitver}.txt
+  shift
+end
+cd

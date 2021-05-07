@@ -1,0 +1,73 @@
+#!/bin/csh
+#***********************************************************************
+#*              CheckCoreq_Mig_script
+#*
+#* Goal: Controllare se la lista di corequisiti inserita all'atto di
+#*       migrare e' corretta, cioe' se i corequisiti sono corretti
+#*       sintatticamente, se non sono stati migrati oppure, nel caso
+#*       siano gia' stati migrati, se conoscono la consegna migranda 
+#*       come corequisito (questo garantisce che il corequisito non sia
+#*       stato ancora estratto. La script restituisce 0 nel caso tutti i
+#*       corequisiti siano corretti, inserendo in FILE_ELENCO l'elenco
+#*       dei corequisiti stessi (al fine di una visualizzazione grafica),
+#*       restituisce 1 se la lista non e' corretta sintatticamente, 2
+#*       se uno dei corequisiti indicati non riconosce la migranda come
+#*       corequisito, inserendo in FILE_ERRORE il nome del corequisito
+#*       errato.
+#*       Attenzione: La script esce termina al primo errore incontrato!!
+#*
+#*
+#* Parametri passati:$1 File log Corequisiti
+#*                   $2 Task_subsystem
+#*                   $3 comitver
+#*                   $4 CCM45_DBlog
+#*                   $5 CCM45_DBlog2
+#*                   $6 file elenco Corequisiti
+#*                   $7 Corequisiti
+#*
+#* Autore: Luca Brizzolara, Apr 2000
+#*
+#***********************************************************************
+set FILE_ERRORE = $1
+set PROGETTO = $2
+set COMITVER = $3
+set CCM45_DBlog = $4
+set CCM45_DBlog2 = $5
+set FILE_ELENCO = $6
+set str = `echo $7 | awk '{gsub(" ","",$1);print toupper($1)}' FS=""`
+set sep = `echo ${str} | awk '{print gsub(",","",$1)}'`
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+
+
+if (`echo ${str} | awk '{print length($1)}'` > 0)  then
+  set i = 0
+  while ($i <= $sep)
+    @ i++
+#***********************************************************************
+# Verifico che il corequisito sia corretto sintatticamente (8 caratteri)
+#***********************************************************************
+    if ((`echo ${str} | awk '{gsub(" ","",$1);print toupper($1)}' | cut -d, -f$i | awk '{print length($1)}'`) == 8) then
+      if (-f ${CCM45_DBlog2}/Delta.`echo ${str} |awk '{gsub(" ","",$1);print toupper($1)}'| cut -d, -f$i`) then
+        echo ${str} | cut -d, -f$i >> $FILE_ERRORE
+        exit 2
+      else
+        if (-f ${CCM45_DBlog}/Delta.`echo ${str}|awk '{gsub(" ","",$1);print toupper($1)}' | cut -d, -f$i`) then
+          set DeltaFile = ${CCM45_DBlog}/Delta.`echo ${str}|awk '{gsub(" ","",$1);print toupper($1)}'| cut -d, -f$i`
+          if ((`cat ${DeltaFile}|grep "COREQUISIT" |grep "${PROGETTO}${COMITVER}"|wc -l` == 0)&&(`cat ${DeltaFile}|grep "COREQUISIT" |grep "${progetto}${COMITVER}"|wc -l` == 0)) then
+            echo ${str} | cut -d, -f$i >> $FILE_ERRORE
+            exit 2
+          else
+            echo "MSG:Registrato Corequisito:  `echo ${str} | cut -d, -f$i`"
+          endif
+        else
+          echo ${str} | cut -d, -f$i >> $FILE_ELENCO
+        endif
+      endif
+    else
+      echo ${str} | cut -d, -f$i >> $FILE_ERRORE
+      exit 1
+    endif
+  end
+endif
+
+exit 0

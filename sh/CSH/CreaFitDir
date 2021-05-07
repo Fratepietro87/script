@@ -1,0 +1,45 @@
+#!/bin/csh
+#***********************************************************************
+#*                       CreaFitDir
+#* 
+#* Goal: Creare se necessario la directory fit; controllo se la consegna
+#*       contiene un .wsd; in caso affermativo controllo se PROGETTO e'
+#*       contenuto in ListaProgetti. In caso affermativo creo la 
+#*       directory fit e vi creo sotto un file di nome fit.txt. I codici
+#*       di ritorno sono:
+#*       0 - se tutto ok
+#*       1 - se fallisce la creazione di tale directory.
+#*       2 - se fallisce la creazione del file.
+#*
+#* Parametri passati:$1 MIG_LOCAL_ROOT (Directory dove si trovano le consegne)
+#*                   $2 CNF_DIR (dove si trova la lista ProjectWsod.lst)
+#*                   $3 Nome del progetto
+#*                   $4 Numero della consegna
+#* 
+#* Autore: Luca Brizzolara - Apr 2000
+#* 
+#***********************************************************************
+
+set MIG_LOCAL_ROOT = $1
+set CNF_DIR = $2
+set PROGETTO = $3
+set COMITVER = $4
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+set ListaProgetti = "${CNF_DIR}/ProjectWsod.lst"
+
+if (-f ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${progetto}${COMITVER}.wsd ) then
+  if (`grep ${PROGETTO} ${ListaProgetti} |wc -l` != 0 ) then
+    mkdir ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/fit
+    if !(-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/fit ) then
+      exit 1
+    endif
+    echo "Fit File" > ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/fit/fit.txt
+    if !(-f ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/fit/fit.txt ) then
+      exit 2
+    endif
+    cat ${ListaProgetti} |grep -v ${PROGETTO} > ${ListaProgetti}.temp
+    mv ${ListaProgetti}.temp ${ListaProgetti}
+  endif
+endif
+
+exit 0

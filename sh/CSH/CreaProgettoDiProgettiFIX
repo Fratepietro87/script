@@ -1,0 +1,35 @@
+#!/bin/csh 
+#************************************************************************
+#              CreaProgettoDiProgetti
+# Goal: Creare il progetto contenitore di tutti i progetti
+#
+# Parameters: Nome del database logico
+#
+# Creator: Luca Brizzolara Feb 2000
+#
+# ATTENZIONE: utilizzare questa script solo quando si crea un database nuovo
+#
+#************************************************************************
+
+set DB_NAME = "DB_WEB"
+set CCMDB = "/usr/CONT_SRV/ccmdb/${DB_NAME}"
+set WA_ROOT = "/usr/CONT_SRV/ccm_wa/${DB_NAME}"
+set PROJ = "Progetti_${DB_NAME}"
+set piattaforma = "HPUX-${DB_NAME}"
+
+if ( `whoami` != cm_sesi ) then
+  echo "Utente non abilitato"
+  exit 1
+endif
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr -d ${CCMDB}`
+
+ccm create -t project ${PROJ}~FIX
+ccm work_area -nwa -setpath ${WA_ROOT} ${PROJ}~FIX
+ccm query -t project -n ${PROJ} -v FIX
+ccm attr -c platform -t string -v ${piattaforma} @1
+ccm attr -m baseline -v "${PROJ}~FIX" @1
+ccm ci -c "Ambiente di FIX per ${DB_NAME}" -p ${PROJ}~FIX -s prep
+ccm ci -c "Versione Iniziale" -p ${PROJ}~FIX -source -ss checkpoint
+
+ccm stop

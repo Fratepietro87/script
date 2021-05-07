@@ -1,0 +1,288 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     Check_Developer
+#*
+#* Goal: check correttezza parametri inseriti da dvp_dts all'atto di
+#*       crearsi il task di lavoro.
+#*
+#* Parameters: $1 cod_opzione
+#*             $2 task_subsys
+#*             $3 comitver (deve essere una stringa di 5 caratteri)
+#*             $4 task_number
+#*             $5 task_synopsis
+#*             $6 creator
+#*             $7 resolver
+#*             $8 prerequisiti
+#*             $9 corequisiti
+#*
+#* Author: Brizzolara Luca December 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+#  Controllo del cod_opzione; ho due possibili valori di entry
+# **********************************************************************
+
+if (($1 != "Modif.Interfaccia")&&($1 != "Modif.Programma")) then
+  exit 0
+endif
+
+# **********************************************************************
+# Inizializzazione variabili
+# **********************************************************************
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set MIG_LOCAL_ROOT = "/usr/CONT_SRV/MIG_DB_GPM"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log"
+set ALFABETO = "0 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
+set NUMERI = "0 1 2 3 4 5 6 7 8 9"
+ 
+
+
+
+# ************************************************************
+# Verifico che il progetto sia quello corretto
+# ************************************************************
+if ( $2 != DTS ) then
+  echo "MSG:$2 e' un progetto che non contempla questa azione."
+  echo "MSG:"
+  echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+  
+# ************************************************************
+# Verifico che la comitver abbia 5 caratteri
+# ************************************************************
+if ( `echo $3 |awk '{ print length($0) }'` != 5 ) then
+  echo "MSG:ERRORE. $3 e' una comitver non composta di 5 caratteri."
+  echo "MSG:"
+  echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+# ************************************************************
+# Metto in upcase la comitver e ne controllo la struttura
+# ************************************************************
+set COMITVER = `echo $3 |awk '{ print toupper($1) }'`
+set alfa = `echo ${COMITVER} |awk '{ print substr($1,1,1) }'`
+set beta = `echo ${COMITVER} |awk '{ print substr($1,2,1) }'`
+set gamma = `echo ${COMITVER} |awk '{ print substr($1,3,1) }'`
+set delta = `echo ${COMITVER} |awk '{ print substr($1,4,1) }'`
+set epsilon = `echo ${COMITVER} |awk '{ print substr($1,5,1) }'`
+if !((`echo ${NUMERI} |grep ${alfa}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${beta}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${gamma}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${delta}|wc -l` != 0)) then
+  echo "MSG:La comitver non e' corretta. I primi 4 caratteri devono essere numeri"
+  echo "MSG:"
+  echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+else
+  if !(`echo ${ALFABETO} |grep ${epsilon} |wc -l` != 0) then
+    echo "MSG:La comitver non e' corretta."
+    echo "MSG:Il quinto carattere deve essere una lettera o uno zero."
+    echo "MSG:"
+    echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+    echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+    goto bad_task
+endif
+
+# ************************************************************
+# Verifico che la consegna non sia stata gia' migrata.
+# ************************************************************
+if ( -f ${CCM45_DBlog}/Delta.$2${COMITVER} ) then
+  echo "MSG:ERRORE. E' gia' stata iniziata una procedura di compilazione per $2${COMITVER}"
+  echo "MSG:Controllare la directory di log."
+  echo "MSG:"
+  echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+# ************************************************************
+# Verifico la correttezza di numerazione della comitver 
+# (sempre crescente)
+# ************************************************************
+set base_number = `echo ${COMITVER} |awk '{ print substr($1,1,3) }'`
+set version_number = `echo ${COMITVER} |awk '{ print substr($1,4,1) }'`
+set version_letter = `echo ${COMITVER} |awk '{ print substr($1,5,1) }'`
+set fnd = `ls -r ${CCM45_DBlog}/Delta.$2* | awk -F. '{print substr($2,4,5)}'`
+set fnum = `echo $#fnd`
+if (${fnum} == 0) then
+  goto Good_Chk
+endif
+set last_patch_number = "$fnd[1]"
+set last_base_number = `echo ${last_patch_number} |awk '{ print substr($1,1,3) }'`
+set last_version_number = `echo ${last_patch_number} |awk '{ print substr($1,4,1) }'`
+set last_version_letter = `echo ${last_patch_number} |awk '{ print substr($1,5,1) }'`
+if ( ${last_base_number} > ${base_number} ) then
+  echo "MSG:ERRORE. $2${COMITVER} viola le regole di numerazione."
+  echo "MSG:Ultima versione valida ${last_patch_number}"
+  echo "MSG:"
+  echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+else
+  if ( ${last_base_number} == ${base_number} ) then
+    if ( ${last_version_number} > ${version_number} ) then
+      echo "MSG:ERRORE. $2${COMITVER} viola le regole di numerazione."
+      echo "MSG:Ultima versione valida ${last_patch_number}"
+      echo "MSG:"
+      echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+      echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+      goto bad_task
+    else
+      if ( ${last_version_number} == ${version_number} ) then
+        if (${last_version_letter} != ${version_letter} ) then
+          foreach Lettera ($ALFABETO)
+            if ($Lettera == ${last_version_letter} ) then
+              goto Good_Chk
+            endif
+            if ($Lettera == ${version_letter} ) then
+              echo "MSG:ERRORE. $2${COMITVER} viola le regole di numerazione."
+              echo "MSG:Ultima versione valida ${last_patch_number}"
+              echo "MSG:"
+              echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+              echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+              goto bad_task
+            endif
+          end
+        else
+          echo "MSG:ERRORE. $2${COMITVER} viola le regole di numerazione."
+          echo "MSG:Ultima versione valida ${last_patch_number}"
+          echo "MSG:"
+          echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+          echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+          goto bad_task
+        endif
+      endif
+    endif
+  endif
+endif
+Good_Chk:
+  
+
+  
+# ************************************************************
+# Controllo che l'utente sia quello corretto
+# ************************************************************
+if ($6 != dvp_dts) then
+  echo "MSG:$6 NON abilitato a questo tipo di operazione."
+  echo "MSG:"
+  echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+
+
+# ************************************************************
+# Non deve esistere la directory di consegna, dovendo crearla
+# io, con il COMITVER ricavato dalla comitver.
+# La COMITVER ha sicuramente le lettere maiuscole, la comitver
+# non e' detto.
+# ************************************************************
+if (-d ${MIG_LOCAL_ROOT}/$2${COMITVER} ) then
+  echo "MSG:ERRORE:Esiste gia' la directory della consegna"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+mkdir ${MIG_LOCAL_ROOT}/$2${COMITVER}
+
+
+
+# **********************************************************************
+# Controllo Prerequisiti
+# **********************************************************************
+
+set str = `echo $8 | awk '{gsub(" ","",$1);print toupper($1)}' FS=""`
+set sep = `echo $str | awk '{print gsub(",","",$1)}'`
+
+if (`echo $str | awk '{print length($1)}'` > 0)  then
+  set i = 0
+  while ($i <= $sep)
+    @ i++
+    if ((`echo $str | awk '{gsub(" ","",$1);print toupper($1)}' | cut -d, -f$i | awk '{print length($1)}'`) == 8) then
+      if((!(-f ${CCM45_DBlog}/Delta.`echo $str | cut -d, -f$i`))&&(!(-f ${CCM45_DBlog2}/Delta.`echo $str | cut -d, -f$i`)))  then
+        echo "MSG:Prerequisito non ancora inserito: `echo $str | cut -d, -f$i`"
+        echo "MSG:  "
+        echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+        echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+        goto bad_task
+      else
+        echo "MSG:Registrato Prerequisito: `echo $str | cut -d, -f$i`"
+      endif
+    else
+      echo "MSG:Anomalia Prerequisito: `echo $str | cut -d, -f$i`"
+      echo "MSG:  "
+      echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+      echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+      goto bad_task
+    endif
+  end
+endif
+# Fine Controllo Prerequisiti
+
+# **********************************************************************
+# Controllo Corequisiti
+# **********************************************************************
+
+set str = `echo $9 | awk '{gsub(" ","",$1);print toupper($1)}' FS=""`
+set sep = `echo $str | awk '{print gsub(",","",$1)}'`
+
+if (`echo $str | awk '{print length($1)}'` > 0)  then
+  set i = 0
+  while ($i <= $sep)
+    @ i++
+    if ((`echo $str |awk '{gsub(" ","",$1);print toupper($1)}'|cut -d, -f$i |awk '{print length($1)}'`) == 8) then
+      echo "MSG:Registrato Corequisito:  `echo $str | cut -d, -f$i`"
+    else
+      echo "MSG:Anomalia Corequisito:  `echo $str | cut -d, -f$i`"
+      echo "MSG:  "
+      echo "MSG:Operazione Annullata. Il task$4 sara' Eliminato. Premere Close."
+      echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+      goto bad_task
+    endif
+  end
+endif
+# Fine Controllo Corequisiti
+
+
+# **********************************************************************
+# Se tutti i controlli sono andati a buon fine, lascio il task-assigned
+# **********************************************************************
+goto good_tsk
+
+
+
+# **********************************************************************
+# Uno dei controlli ha dato esito negativo per cui elimino il task
+# **********************************************************************
+bad_task:
+
+cat > $CCM45_DBlog/tsk$4 <<!
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}\`
+ccm del task$4~1:task:probtrac
+ccm stop
+rm $CCM45_DBlog/tsk$4 &
+!
+#source $CCM45_DBlog/tsk$4 &
+exit 0
+
+# **********************************************************************
+# Mando un messaggio di correttezza a video ed inizializzo il file delta.
+# **********************************************************************
+good_tsk:
+
+echo "MSG:Task creato correttamente..."
+echo "MSG: "
+echo "Modifica oggetti per consegna $2${COMITVER} in corso.. " > ${CCM45_DBlog}/Delta.$2${COMITVER}
+echo "Questo file verra' reinizializzato quando verra' effettuata la migrazione." >> ${CCM45_DBlog}/Delta.$2${COMITVER}
+exit 0
+

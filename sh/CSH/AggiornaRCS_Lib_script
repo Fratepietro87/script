@@ -1,0 +1,194 @@
+#!/bin/csh
+############################################################
+#
+#                  AggiornaRCS_Lib_script
+#
+# Goal: Aggiornare RCS con la nuova versione del progetto
+#       Questa script viene azionata al passaggio in released
+#       di tutti i progetti il cui nome e' riportato in
+#       ListaProj_RCS; in tale lista sono contenute
+#       lib, common, include e progetti non soggetti a fase di test
+#
+# Parameters: $1 project name
+#             $2 project version
+#             $3 project MaintainWa (Boolean)
+#             $4 subsystem
+#
+# Author: Luca Brizzolara, Sep 2001
+#
+############################################################
+
+#*****************************************************
+# Definizione delle variabili
+#*****************************************************
+set CCM51_DB = "/tst1/ccm_databases/SELESTA"
+set SCRIPT_PATH = "${CCM51_DB}/lib/notify/Unix"
+set CCM51DB_LOG = "${CCM51_DB}/lib/notify/log"
+set LOCAL_CNF_PATH = "${CCM51_DB}/lib/notify/cnf"
+set REMOTE_SCRIPT_PATH = "/develop/ccm_root/TRIGGER_SCRIPT/SELESTA"
+set REMOTE_CNF_PATH = "${REMOTE_SCRIPT_PATH}/cnf"
+set LISTA_NAME = "ListaProj_RCS_LIB"
+set PROJECT_NAME = $1
+set PROJECT_VERSION = $2
+set PROJECT_MAINTAINWA = "$3"
+set ISTANCE = $4
+
+#*****************************************************
+# Verifico che il progetto abbia la workarea mantenuta
+#*****************************************************
+if ( ${PROJECT_MAINTAINWA} == FALSE ) then
+  echo "MSG:ERRORE. Il progetto ${PROJECT_NAME}-${PROJECT_VERSION} non ha la workarea mantenuta."
+  echo "MSG:Non e' quindi possibile eseguire l'aggiornamento di RCS"
+  echo "MSG:Operazione di Check non riuscita" 
+  exit 1
+endif
+
+#*****************************************************
+# Verifico se sono o meno sul server Continuus
+# ed in base a cio' decido il path di alcuni file.
+#*****************************************************
+if !( -d ${CCM51DB_LOG} ) then
+  set RCS_SCRIPT = "${REMOTE_SCRIPT_PATH}/Agg_loc_RCS.ksh"
+  set LISTA_PROGETTI = "${REMOTE_CNF_PATH}/${LISTA_NAME}"
+else
+  set RCS_SCRIPT = "${SCRIPT_PATH}/Agg_loc_RCS.ksh"
+  set LISTA_PROGETTI = "${LOCAL_CNF_PATH}/${LISTA_NAME}"
+endif
+
+
+#*****************************************************
+# Verifico se il progetto necessita della procedura
+# di aggiornamento RCS.
+#*****************************************************
+if (`grep ":${PROJECT_NAME}:" ${LISTA_PROGETTI} |wc -l` == 0 ) then
+  exit 0
+endif
+
+  
+#*****************************************************
+# Se non esiste creo la directory per i file di log
+#*****************************************************
+if !( -d ${HOME}/CMLOG ) then
+  mkdir ${HOME}/CMLOG
+endif
+
+#*****************************************************
+# Setto i nomi di alcune liste.
+#*****************************************************
+set BATCH_FILE = "${HOME}/CMLOG/${PROJECT_NAME}.${PROJECT_VERSION}.bat"
+set LISTA_OLD = "${HOME}/CMLOG/${PROJECT_NAME}.${PROJECT_VERSION}.old"
+set LISTA_NEW = "${HOME}/CMLOG/${PROJECT_NAME}.${PROJECT_VERSION}.new"
+set LISTA_CPY = "${HOME}/CMLOG/${PROJECT_NAME}.${PROJECT_VERSION}.cpy"
+
+echo "MSG:Procedura di Aggiornamento RCS in corso"
+
+#*****************************************************
+# Inizio a scrivere il batch
+#*****************************************************
+cat > ${BATCH_FILE}<<EndOfInput
+
+#*****************************************************
+# Faccio partire una sessione background di Continuus
+#*****************************************************
+setenv CCM_ADDR \`ccm start -m -q -nogui -d ${CCM51_DB} -h omis123 -r build_mgr -u $HOME/tmp -rc\`
+
+#*****************************************************
+# Ricerco la versione del progetto padre.
+#*****************************************************
+if (\`ccm query "is_predecessor_of('${PROJECT_NAME}-${PROJECT_VERSION}:project:${ISTANCE}')" |wc -l \` != 0 ) then
+  ccm query "is_predecessor_of('${PROJECT_NAME}-${PROJECT_VERSION}:project:${ISTANCE}')"
+  set OLD_VERSION = \`ccm attr -s version @1\`
+else
+  set OLD_VERSION = "NO_VERSION"
+endif
+
+#*****************************************************
+# Ricerco il wa_path della versione nuova.
+#*****************************************************
+ccm query "cvtype='project' and name='${PROJECT_NAME}' and version='${PROJECT_VERSION}' and subsystem='${ISTANCE}'"
+set WA_PATH = \`ccm attr -s wa_path @1\`
+
+
+#*****************************************************
+# Ricerco l'elenco degli oggetti (directory escluse)
+# appartenenti al progetto in versione PROJECT_VERSION
+# Il formato dell'output e':
+# nome-versione:tipo:istanza
+#*****************************************************
+ccm query "is_member_of('${PROJECT_NAME}-${PROJECT_VERSION}:project:${ISTANCE}') and not type='dir'" -u -f "%name-%version:%type:%subsystem" > ${LISTA_NEW}
+
+#*****************************************************
+# Ricerco l'elenco degli oggetti (directory escluse)
+# appartenenti al progetto in versione OLD_VERSION
+# Il formato dell'output e':
+# nome-versione:tipo:istanza
+#*****************************************************
+if (\${OLD_VERSION} != "NO_VERSION" ) then
+  ccm query "is_member_of('${PROJECT_NAME}-\${OLD_VERSION}:project:${ISTANCE}') and not type='dir'" -u -f "%name-%version:%type:%subsystem" > ${LISTA_OLD}
+else
+  cat /dev/null > ${LISTA_OLD}
+endif
+
+#*****************************************************
+# Cerco gli elementi della prima lista non
+# contenuti nella seconda.
+#*****************************************************
+touch ${LISTA_CPY}
+diff -b -e ${LISTA_OLD} ${LISTA_NEW} |grep ":" > ${LISTA_CPY}
+
+
+#*****************************************************
+# Ciclo per la copia degli elementi
+#*****************************************************
+set NumeroFile = \`cat ${LISTA_CPY} |wc -l\`
+set i = 0
+while (\$i < \${NumeroFile} )
+  @ i++
+#*****************************************************
+# Ricerco per ogni oggetto i parametri necessari alla
+# ricerca del suo path relativo.
+#*****************************************************
+  set Name = \`head -n \$i ${LISTA_CPY} |tail -1 |awk -F- '{ print \$1 }'\`
+  set Version = \`head -n \$i ${LISTA_CPY} |tail -1 |awk -F: '{ print \$1 }' |awk -F- '{ print \$2 }'\`
+  set Type = \`head -n \$i ${LISTA_CPY} |tail -1 |awk -F: '{ print \$2 }'\`
+  set Istance = \`head -n \$i ${LISTA_CPY} |tail -1 |awk -F: '{ print \$3 }'\`
+#*****************************************************
+# Trovo il path relativo dell'oggetto
+#*****************************************************
+  set RelativePath = \`ccm finduse -all_proj -n \${Name} -v \${Version} -t \${Type} -i \${Istance} |grep "${PROJECT_NAME}-${PROJECT_VERSION}" |head -n 1 |nawk -F"\${Name}-\${Version}@" '{ print \$1 }' |awk '{ print \$1 }'\`
+  set FilePath = "\${WA_PATH}/\${RelativePath}"
+#*****************************************************
+# Ricavo il path di destinazione e copio
+#*****************************************************
+  set DestPath = \`echo \${FilePath} |nawk '{ gsub("ccm_wa","rcs_wa"); print \$0 }'\`
+  mkdir -p \${DestPath}
+  cp \${FilePath}/\${Name} \${DestPath}
+end
+
+#*****************************************************
+# fermo la sessione di Continuus
+#*****************************************************
+ccm stop
+
+#*****************************************************
+# Cancello i file di log temporanei
+#*****************************************************
+rm -f ${LISTA_OLD}
+rm -f ${LISTA_NEW}
+rm -f ${LISTA_CPY}
+
+#*****************************************************
+# Lancio la script per aggiornare RCS
+#*****************************************************
+set RCS_PATH = \`echo \${WA_PATH}/${PROJECT_NAME} |nawk '{ gsub("ccm_wa","rcs_wa"); print \$0 }'\`
+${RCS_SCRIPT} \${OLD_VERSION} ${PROJECT_VERSION} \${RCS_PATH}
+
+
+#*****************************************************
+# Autocancello il batch al termine dell'esecuzione
+#*****************************************************
+#rm -f ${BATCH_FILE}&
+EndOfInput
+
+source ${BATCH_FILE}&
+

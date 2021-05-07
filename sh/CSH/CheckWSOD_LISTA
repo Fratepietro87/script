@@ -1,0 +1,42 @@
+#!/bin/csh
+#***********************************************************************
+#*                       CheckWSOD_LISTA
+#* 
+#* Goal: Controllare la correttezza formale della lista wsod. I codici di
+#*       ritorno sono:
+#*       0 - se tutto ok
+#*       1 - se la lista contiene asterischi al di fuori delle righe ghost
+#*       2 - se i file sono referenziati con il path assoluto di windows 
+#*           cioe', cominciando con C: o c:
+#*
+#* Parametri passati:$1 MIG_LOCAL_ROOT (Directory dove si trovano le consegne)
+#*                   $2 LOG_FILE (dove mettere il nome del bnd mancante nella lista)
+#*                   $3 Nome del progetto
+#*                   $4 Numero della consegna
+#* 
+#* Autore: Luca Brizzolara - Apr 2000
+#* 
+#***********************************************************************
+
+set MIG_LOCAL_ROOT = $1
+set PROGETTO = $2
+set COMITVER = $3
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+set ListaDeltaWSOD = "${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${progetto}${COMITVER}.wsd"
+
+if ( -f ${ListaDeltaWSOD} ) then
+#***********************************************************************
+# Controllo la presenza di asterischi in righe non ghost.
+#***********************************************************************
+  if (`cat ${ListaDeltaWSOD} |grep -v "ghost"|grep -v "GHOST"|grep "\*" |wc -l` != 0) then
+    exit 1
+  endif
+#***********************************************************************
+# Controllo la presenza di C:\ o c:\ nel file
+#***********************************************************************
+  if ((`cat ${ListaDeltaWSOD} |grep "C\:" |wc -l` != 0)||(`cat ${ListaDeltaWSOD} |grep "c\:" |wc -l` != 0)) then
+    exit 2
+  endif
+endif
+						
+exit 0

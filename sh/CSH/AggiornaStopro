@@ -1,0 +1,48 @@
+#!/bin/csh -x
+#*********************************************************************
+#                 AggiornaStoproc
+# 
+# Goal: aggiornare lo stoproc.sql nel caso una patch abbia scaricato 
+#       uno stopro.sql
+# 
+# Creator: Luca Brizzolara December 1999
+#*********************************************************************
+set SQL_DIR = "/u/dsim/sql"
+set LOG_DIR = "/u/dsim/CM45_DIR/LOG"
+set INST_PATCH_LOG = ${LOG_DIR}/instpatch.log
+set TODAY = `date "+%d-%b-%y %H:%M:%S"`
+
+set StoproFile = "${SQL_DIR}/stopro.sql"
+set StoprocFile = "${SQL_DIR}/stoproc.sql"
+set TempStoprocFile = "${LOG_DIR}/StoprocTemp"
+set ElencoFile = "${LOG_DIR}/FileInStopro"
+
+
+echo "${TODAY} AggiornaStopro : START">>$INST_PATCH_LOG
+
+cat ${StoproFile} |grep "prompt lanciato" |awk -F "lanciato " '{ print $2 }' > ${ElencoFile}
+set LunghezzaStoproc = `cat ${StoprocFile}|wc -l`
+set LungTemp = `expr ${LunghezzaStoproc} - 1`
+head -n ${LungTemp} ${StoprocFile} > ${TempStoprocFile}
+set NumeroOggetti = `cat ${ElencoFile}|wc -l`
+set i = 0
+echo "Parte la script"
+while ($i < ${NumeroOggetti})
+  @ i++
+  echo $i
+  set Elemento1 = "start `head -n $i ${ElencoFile}|tail -n 1`"
+  set Elemento2 = "lanciato `head -n $i ${ElencoFile}|tail -n 1`"
+  if (`grep "${Elemento2}" ${TempStoprocFile}|wc -l` == 0 ) then
+    echo "aggiungo ${Elemento1}"
+    grep "${Elemento1}" ${StoproFile}
+    grep "${Elemento1}" ${StoproFile} >> ${TempStoprocFile}
+    grep "${Elemento2}" ${StoproFile}
+    grep "${Elemento2}" ${StoproFile} >> ${TempStoprocFile}
+  endif
+end
+mv ${StoproFile} ${SQL_DIR}/stopro.old
+echo "spool off" >> ${TempStoprocFile}
+cp ${TempStoprocFile} ${StoprocFile}
+rm ${TempStoprocFile}
+
+echo "${TODAY} AggiornaStopro : END (exit 0)">>$INST_PATCH_LOG

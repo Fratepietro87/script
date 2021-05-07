@@ -1,0 +1,627 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     DoMig_Datamat
+#*
+#* Goal: ha lo scopo di consentire la compilazione tramite SISO in
+#*       presenza di una patch o di una baseline. Questa script non deve
+#*       produrre nessuna migrazione in continuus. Viene lanciata 
+#*       unicamente dal trigger.
+#*
+#* Parameters: $1 cod_opzione
+#*             $2 task_subsys
+#*             $3 comitver (deve essere una stringa di 5 caratteri)
+#*             $4 task_number
+#*             $5 task_synopsis
+#*             $6 creator
+#*             $7 resolver
+#*             $8 prerequisiti
+#*             $9 corequisiti
+#*
+#* Author: Brizzolara Luca, Oct 1999
+#* Modified: Brizzolara Luca, Mar 2000
+#*
+#***********************************************************************
+
+#***********************************************************************
+#  Controllo del cod_opzione; ho due possibili valori di entry
+#***********************************************************************
+
+if !(($1 == "Compilaz.Baseline" )||($1 == "Compilaz.Patch" )||($1 == "Compilaz.Fix" )) then
+  exit 0
+endif
+  exit 0
+#***********************************************************************
+# Inizializzazione variabili
+#***********************************************************************
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set MIG_LOCAL_ROOT = "/usr/CONT_SRV/MIG_DB_GPM"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log"
+set SISO_REMOTE_DIR = "/u/dsim/siso"
+set SISO_SCRIPT_DIR = "/u/dsim/CM45_DIR/SCRIPT"
+set LISTA_DIR = "/u/dsim/CM45_DIR/LISTE"
+set FMX_REMOTE_DIR = "/u/dsim/fmx"
+set PATCH_DEPOT_PATH = "/u/sw_depot"
+set BASE_LOCAL_SCRIPT_DIR = "/usr/local/gpm1scr"
+set MODEL_CONFIG_FILE = "${SCRIPT_DIR}/ModelConfig"
+set DATA = `date +%d-%b-%Y`
+set ALFABETO = "0 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
+set NUMERI = "0 1 2 3 4 5 6 7 8 9"
+set PROGETTO = $2
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+set CONF_CONT_FILE = "${BASE_LOCAL_SCRIPT_DIR}/SCRIPT/CONTINUUS.CFG"
+set LAST_PATCH_TABELLA = "${SCRIPT_DIR}/LAST_PATCH_NUMBER"
+set PROBLEM_LOG = "${CCM45_DBlog}/problem.temp"
+set COMITVER = `echo $3 |awk '{ print toupper($1) }'`
+set PROJECT_DIR = "${SCRIPT_DIR}/${PROGETTO}"
+set COMMON_DIR = "${SCRIPT_DIR}/COMMON"
+set Ntask = $4
+ 
+
+#***********************************************************************
+# Sezione per i controlli da fare preventivamente; e' possibile che 
+# parte dei controlli siano differenziati a seconda del valore di codice
+# opzione.
+#***********************************************************************
+
+# ************************************************************
+# Controllo che l'utente sia quello corretto.
+# ************************************************************
+if ($6 != mig_dtm ) then
+  echo "MSG:$6 non abilitato a migrare del SW."
+  echo "MSG:  "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+# ************************************************************
+# Controllo che l'utente sia quello corretto.
+# ************************************************************
+if (${PROGETTO} != DTM ) then
+  echo "MSG:operazione non consentita per progetto ${PROGETTO}"
+  echo "MSG:  "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+#***********************************************************************
+# Controllo che esista e sia leggibile model_config_file
+# - 0 tutto ok
+# - 1 non esiste model_config_file
+# - 2 model_config_file non e' leggibile
+#***********************************************************************
+${PROJECT_DIR}/CheckConfFile ${MODEL_CONFIG_FILE}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella lettura dei dati"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:il file ${MODEL_CONFIG_FILE} non esiste."
+  else
+    echo "MSG:il file ${MODEL_CONFIG_FILE} esiste,"
+    echo "MSG:ma ccm_root non ha su di essa i permessi di lettura"
+  endif
+  echo "MSG: "
+  echo "MSG:Contattare il CM per la risoluzione del problema"
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo che esista e sia leggibile configuration file
+# - 0 tutto ok
+# - 1 non esiste configuration file
+# - 2 configuration file non e' leggibile
+#***********************************************************************
+${PROJECT_DIR}/CheckConfFile ${CONF_CONT_FILE}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella lettura dei dati"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:il file ${CONF_CONT_FILE} non esiste."
+  else
+    echo "MSG:il file ${CONF_CONT_FILE} esiste,"
+    echo "MSG:ma ccm_root non ha su di essa i permessi di lettura"
+  endif
+  echo "MSG: "
+  echo "MSG:Contattare il CM per la risoluzione del problema"
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+else
+  set PATCH_SQL_NAME = `grep PATCH_SQL_NAME ${CONF_CONT_FILE}|awk '{ print $2 }'`
+  set INIT_NEG_SQL = `grep INIT_NEG_NAME ${CONF_CONT_FILE}|awk '{ print $2 }'`
+endif
+
+#***********************************************************************
+# Controllo che esista e sia leggibile il file contenente l'ultima patch.
+# - 0 tutto ok
+# - 1 non esiste configuration file
+# - 2 configuration file non e' leggibile
+#***********************************************************************
+${PROJECT_DIR}/CheckConfFile ${LAST_PATCH_TABELLA}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella lettura dei dati"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:il file ${CONF_CONT_FILE} non esiste."
+  else
+    echo "MSG:il file ${CONF_CONT_FILE} esiste,"
+    echo "MSG:ma ccm_root non ha su di essa i permessi di lettura"
+  endif
+  echo "MSG: "
+  echo "MSG:Contattare il CM per la risoluzione del problema"
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+else
+  set last_patch_number = `grep PATCH_NUMBER ${LAST_PATCH_TABELLA}|awk '{ print $2 }'`
+endif
+
+
+#***********************************************************************
+# Verifico che non ci siano troppe migrazioni in corso (limito a tre il
+# numero di migrazioni contemporanee per ragioni di efficienza).
+# Verifico poi, che non sia in corso un'altra migrazione che coinvolge
+# lo stesso progetto.
+# Codici ritornati:
+# 0 - tutto ok
+# 1 - troppe migrazioni.
+# 2 - gia' in corso una migrazione di questo progetto.
+#***********************************************************************
+${COMMON_DIR}/CheckNumMigrazioni ${CCM45_DBlog} ${PROGETTO}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella procedura"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:sono in corso troppe migrazioni. Riprovare piu' tardi"
+  else
+    echo "MSG:E' gia' in corso una migrazione per ${PROGETTO}"
+  endif
+  echo "MSG:Se il problema persiste, contattare ufficio CM"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo cha la comitver sia corretta (totalmente numerica). Non
+# controllo l'incrementalita'.
+# I codici di ritorno sono:
+# - 0 per COMITVER ok;
+# - 1 per COMITVER non lunga 5 caratteri
+# - 2 per COMITVER formalmente non corretta.
+#***********************************************************************
+${PROJECT_DIR}/CheckComitverAlfaNumerica ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La comitver inserita non e' di 5 caratteri"
+  else
+    echo "MSG:La comitver inserita ha un formato non conforme alle regole"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo cha la comitver sia alfanumericamente incrementale rispetto
+# all'ultima patch.
+# I codici di ritorno sono:
+# - 0 per COMITVER ok;
+# - 1 per COMITVER non incrementale.
+#***********************************************************************
+${PROJECT_DIR}/CheckComitverIncrementaleAlfaNumerica ${COMITVER} ${last_patch_number}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  echo "MSG:La comitver inserita non e' incrementale rispetto alla precedente patch.
+  echo "MSG: "
+  echo "MSG:Se il problema persiste, contattare CM."
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Verifico la correttezza dei prerequisiti; i codici di ritorno sono:
+# - 0 se e' tutto ok (in ${TempFileParametri} trovo la lista dei
+#     prerequisiti che sono stati inseriti, se ce ne sono)
+# - 1 se la lista non e' formalmente corretta
+# - 2 se uno dei prerequisiti non e' stato ancora migrato.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+set LogFileErrori = "${CCM45_DBlog}/LogFileErrori"
+cat /dev/null > ${TempFileParametri}
+cat /dev/null > ${LogFileErrori}
+
+${COMMON_DIR}/CheckPrereq_Mig_script ${LogFileErrori} ${PROGETTO} ${COMITVER} ${TempFileParametri} $8
+set ESITO = ${status}
+
+if (${ESITO} == 0) then
+  if (`cat ${TempFileParametri}|wc -l` != 0 ) then
+    set NumPrereq = `cat ${TempFileParametri}|wc -l`
+    set i = 0
+    while ($i < ${NumPrereq} )
+      @ i++
+      set PrereqName = `head -n $i ${TempFileParametri}|tail -n 1`
+      echo "MSG:Registrato Prerequisito: ${PrereqName}"
+    end
+  endif
+else
+  if (${ESITO} == 2) then
+    set prereq_error = `cat ${LogFileErrori}`
+    echo "MSG:Errore Prerequisito. ${prereq_error} Non Migrato"
+  else
+    echo "MSG:Anomalia nella lista prerequisiti"
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${LogFileErrori} ${TempFileParametri}
+  goto bad_task
+endif
+
+rm -f ${LogFileErrori} ${TempFileParametri}
+
+
+
+#***********************************************************************
+# Verifico la correttezza dei corequisiti; i codici di ritorno sono:
+# - 0 se e' tutto ok (in ${TempFileParametri} trovo la lista dei corequisiti
+#     che sono stati inseriti, se ce ne sono)
+# - 1 se la lista non e' formalmente corretta
+# - 2 se uno dei prerequisiti non ha la consegna migranda come
+#     corequisito.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+set LogFileErrori = "${CCM45_DBlog}/LogFileErrori"
+cat /dev/null > ${TempFileParametri}
+cat /dev/null > ${LogFileErrori}
+
+${COMMON_DIR}/CheckCoreq_Mig_script ${LogFileErrori} ${PROGETTO} ${COMITVER} ${TempFileParametri} $9
+set ESITO = ${status}
+
+if (${ESITO} == 0) then
+  if (`cat ${TempFileParametri}|wc -l` != 0) then
+    set NumCoreq = `cat ${TempFileParametri}|wc -l`
+    set i = 0
+    while ($i < ${NumCoreq})
+      @ i++
+      set CoReqName = `head -n $i ${TempFileParametri}|tail -n 1`
+      echo "MSG:Registrato Prerequisito: ${CoReqName}"
+    end
+  endif
+else
+  if (${ESITO} == 2) then
+    set coreq_error = `cat ${LogFileErrori}`
+    echo "MSG:Errore Corequisito: $coreq_error"
+    echo "MSG:$coreq_error non ha ${PROGETTO}${COMITVER} come COREQUISITO"
+  else
+    echo "MSG:Anomalia  nella lista dei Corequisiti"
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${TempFileParametri} ${LogFileErrori}
+  goto bad_task
+endif
+
+rm -f ${TempFileParametri} ${LogFileErrori}
+
+
+
+#*****************************************************************
+# Dalla comitver devo ricavare la versione della patch:
+# la sintassi del versione della patch e' la seguente
+# numero1.p{numero2}{lettera}, mentre la comitver ha la sintassi
+# seguente: {numero1}{numero2}{lettera}, 5 caratteri in totale.
+#*****************************************************************
+set versione = `echo ${COMITVER} |awk '{ print tolower(substr($1,1,3))".p"tolower(substr($1,4,2)) }'`
+set DIR_PATCH = `echo ${COMITVER} |awk '{ print toupper($1) }'`
+
+#*************************************************************
+# Verifico il collegamento con il server c-gpm1-c
+#*************************************************************
+if (( $1 == "Compilaz.Patch" )||( $1 == "Compilaz.Fix" )) then
+  remsh c-gpm1-c -l dsim -n "ls ${PATCH_DEPOT_PATH}/${DIR_PATCH}"
+  if (${status}) then
+    echo "MSG:ERRORE. Problemi nel collegamento con il server c-gpm2-c,"
+    echo "MSG:ERRORE. oppure manca la directory ${DIR_PATCH}"
+    echo "MSG:Verificare il collegamento e riprovare."
+    echo "MSG: "
+    echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+    echo "ERROR_MSG:Migrazione respinta. Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+    goto bad_task
+  endif
+endif
+
+#***********************************************************************
+# Controllo che la consegna non esista e non sia gia' stata migrata.
+# I codici di ritornon sono:
+# 0 se tutto ok (in questo caso creo la directory di consegna)
+# 1 se esiste gia' la consegna
+# 2 se la consegna e' gia' stata migrata.
+#***********************************************************************
+${PROJECT_DIR}/CheckConsegnaPatchBaseline ${MIG_LOCAL_ROOT} ${CCM45_DBlog} ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La directory di consegna ${PROGETTO}${COMITVER} esiste gia'"
+  else
+    echo "MSG:La consegna ${PROGETTO}${COMITVER} e' gia' stata migrata"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+#*************************************************************
+# Non deve esistere la directory di consegna, dovendo crearla
+# io, con il COMITVER ricavato dalla comitver.
+# La COMITVER ha sicuramente le lettere maiuscole, la comitver
+# non e' detto.
+# La DIR_PATCH contiene anche la p, ed e' ottenuta dall'upcase
+# di versione.
+#*************************************************************
+if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} ) then
+  echo "MSG:ERRORE:Esiste gia' la directory della consegna"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+mkdir ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}
+
+#***********************************************************************
+# Se tutti i controlli sono andati a buon fine, comincio ad effettuare
+# la compilazione.
+#***********************************************************************
+goto good_tsk
+
+
+
+#***********************************************************************
+# Uno dei controlli ha dato esito negativo per cui elimino il task
+#***********************************************************************
+bad_task:
+
+cat > $CCM45_DBlog/tsk$4 <<!
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}\`
+ccm del task$4~1:task:probtrac
+ccm stop
+rm $CCM45_DBlog/tsk$4 &
+!
+#source $CCM45_DBlog/tsk$4 &
+exit 0
+
+#***********************************************************************
+# Sezione per realizzare la compilazione; avremo due strade separate per
+# gestire le due differenti procedure.
+# Le script devono essere lanciate con l'utente datasim (dsim) per cui
+# sara' necessario fare una remsh collegandosi alla macchina con tale 
+# utente e poi procedere; il problema e' la password che deve essere 
+# calcolata con un algoritmo.
+# - lockare e delockare la possibilita' di compilazione SISO
+#***********************************************************************
+good_tsk:
+
+if (( $1 == "Compilaz.Patch" )||( $1 == "Compilaz.Fix" )) then
+  echo "LOCK Procedura di Compilazione SISO" > ${CCM45_DBlog}/DataMig.LOCK
+  echo "MSG:Compilazione SISO in Corso..."
+  echo "MSG: "
+  echo "Procedura di compilazione SISO per ${PROGETTO}${COMITVER} iniziata" > ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+else
+  echo "Task per la compilazione baseline creato" > ${CCM45_DBlog}/DataMig.LOCK
+  echo "MSG:Task per Baseline correttamente creato"
+  echo "MSG: "
+  echo "Creato Task per la compilazione di una baseline" > ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+endif
+echo "Questo file verra' reinizializzato quando verra' effettuata la migrazione." >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+#***********************************************************************
+# La procedura deve essere esterna; preparo lo script per il batch
+#***********************************************************************
+cat > ${CCM45_DBlog}/DoMig.Datamat <<EndOfInput1
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}\`
+ccm query -t task -name task$4
+ccm attr -m resolver -v " " @1
+if ( $3 != ${COMITVER} ) then
+  ccm attr -m comitver -v ${COMITVER} @1
+endif
+
+#***********************************************************************
+# Lancio con remsh su c-gpm1-c lo script di compilazione; lo faccio solo
+# se in presenza di patch.
+#***********************************************************************
+if (( $1 == "Compilaz.Patch" )||( $1 == "Compilaz.Fix" )) then
+
+#***********************************************************************
+# Verifico se nella directory in cui e' stata scaricata la patch, 
+# esiste un tar di fmx; in tale caso lo copio nella directory fmx, ne
+# faccio l'untar e lo elimino. Copio il tar di siso (c'e' sempre)
+# nella directory siso, ne faccio l'untar, e lo elimino.
+#***********************************************************************
+  if (\`remsh c-gpm1-c -l dsim -n "ls ${PATCH_DEPOT_PATH}/${DIR_PATCH}"|grep fmx|wc -l\` != 0) then
+    set fmx_tar_name = \`remsh c-gpm1-c -l dsim -n "ls ${PATCH_DEPOT_PATH}/${DIR_PATCH}"|grep fmx\`
+    remsh c-gpm1-c -l dsim -n "cp ${PATCH_DEPOT_PATH}/${DIR_PATCH}/\${fmx_tar_name} ${FMX_REMOTE_DIR}"
+    remsh c-gpm1-c -l dsim -n "cd ${FMX_REMOTE_DIR}; tar tvf ./\${fmx_tar_name} > ${LISTA_DIR}/fmx.lista.${versione}"
+    remsh c-gpm1-c -l dsim -n "cd ${FMX_REMOTE_DIR}; tar xvf ./\${fmx_tar_name}"
+    remsh c-gpm1-c -l dsim -n "rm -f ${FMX_REMOTE_DIR}/\${fmx_tar_name}"
+  endif
+  set siso_tar_name = \`remsh c-gpm1-c -l dsim -n "ls ${PATCH_DEPOT_PATH}/${DIR_PATCH}"|grep -v fmx\`
+  remsh c-gpm1-c -l dsim -n "cp ${PATCH_DEPOT_PATH}/${DIR_PATCH}/\${siso_tar_name} ${SISO_REMOTE_DIR}"
+  remsh c-gpm1-c -l dsim -n "cd ${SISO_REMOTE_DIR}; tar xvf ./\${siso_tar_name}"
+  remsh c-gpm1-c -l dsim -n "rm -f ${SISO_REMOTE_DIR}/\${siso_tar_name}"
+
+#***********************************************************************
+# Mi salvo una lista degli oggetti contenuti nella directory sql prima
+# del sisobd.she per determinare se e' stato generato un nuovo patch.sql
+#***********************************************************************
+  remsh c-gpm1-c -l dsim -n "ls /u/dsim/sql" > ${CCM45_DBlog}/Lista.SQL.before
+  remsh c-gpm1-c -l dsim -n "ll /u/dsim/sql/${INIT_NEG_SQL}" > ${CCM45_DBlog}/INIT.NEG.DATE.before
+
+#***********************************************************************
+# Rinomino il sisobd.she per esigenze di archivio.
+#***********************************************************************
+  set SISO_NEW_NAME = "sisobd.${COMITVER}.chk"
+  set SISO_LOG_NAME = "sisobd.${COMITVER}.log"
+  remsh c-gpm1-c -l dsim -n "cd ${SISO_REMOTE_DIR}; mv sisobd.she \${SISO_NEW_NAME}"
+
+#***********************************************************************
+# Lancio la patch per il primo giro di compilazione
+#***********************************************************************
+  remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR};./Lanciasiso.ksh \${SISO_NEW_NAME} \${SISO_LOG_NAME}"
+
+#***********************************************************************
+# Devo ricostruire il config_file e copiarlo al posto del vecchio
+#***********************************************************************
+  set new_config_file = "${CCM45_DBlog}/Config_file.new"
+  echo "VER ${versione}" > \${new_config_file}
+  echo "DATA ${DATA}" >> \${new_config_file}
+
+
+#***********************************************************************
+# Mi salvo una lista degli oggetti contenuti nella directory sql dopo
+# il sisobd.she per determinare se e' stato generato un nuovo patch.sql.
+# Poi, tramite una diff, trovo quanto cambiato. Lancio tale Delta.
+# Inserisco nel Configfile la riga opportuna riguardante l'sql.
+#***********************************************************************
+  remsh c-gpm1-c -l dsim -n "ls /u/dsim/sql" > ${CCM45_DBlog}/Lista.SQL.after
+  diff -b -e ${CCM45_DBlog}/Lista.SQL.before ${CCM45_DBlog}/Lista.SQL.after|grep sql > ${CCM45_DBlog}/Lista.SQL
+  rm ${CCM45_DBlog}/Lista.SQL.after ${CCM45_DBlog}/Lista.SQL.before
+  if (\`cat ${CCM45_DBlog}/Lista.SQL|grep ${PATCH_SQL_NAME} |wc -l\` != 0) then
+    set SQL_NEW_NAME = "patch${COMITVER}.sql"
+    set DELTA_SQL_NAME = "DeltaPatch.${COMITVER}.sql"
+    set LAST_SQL_NAME = "patch${last_patch_number}.sql"
+    set SQL_LST_NAME = "patch${COMITVER}.lst"
+    remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR}; ./GeneraDeltaSql ${PATCH_SQL_NAME} \${LAST_SQL_NAME} \${DELTA_SQL_NAME} \${SQL_LST_NAME} \${SQL_NEW_NAME}"
+    remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR}; ./Lanciapatch.ksh \${DELTA_SQL_NAME}"
+    echo "DBL_FLAG" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+    echo "PATCH_SQL \${DELTA_SQL_NAME}" >> \${new_config_file}
+  else
+    echo "PATCH_SQL " >> \${new_config_file}
+  endif
+  remsh c-gpm1-c -l dsim -n "ll /u/dsim/sql/${INIT_NEG_SQL}" > ${CCM45_DBlog}/INIT.NEG.DATE.after
+  if (\`diff -b -e ${CCM45_DBlog}/INIT.NEG.DATE.before ${CCM45_DBlog}/INIT.NEG.DATE.after|wc -l\` != 0 ) then
+    remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR}; ./Lanciainitneg.ksh"
+    if (\`grep DBL_FLAG ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}|wc -l\` == 0 ) then
+      echo "DBL_FLAG" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+    endif
+  endif
+  rm -f ${CCM45_DBlog}/INIT.NEG.DATE.before ${CCM45_DBlog}/INIT.NEG.DATE.after
+
+#***********************************************************************
+# Completo il nuovo config_file.
+#***********************************************************************
+  echo "FILE_SISOBD_SHE \${SISO_NEW_NAME}" >> \${new_config_file}
+  cat ${MODEL_CONFIG_FILE} >> \${new_config_file}
+  chmod 744 \${new_config_file}
+  remsh c-gpm1-c -l dsim  -n "rcp c-gpm2-c:\${new_config_file} ${SISO_SCRIPT_DIR}/Config_file" 
+
+#***********************************************************************
+# Esamino se il sisodb.she ha generato anche uno stopro.sql; in tale
+# caso lancio una script per aggiornare lo stoproc.sql.
+# Ad ogni maniera lancio lo stoproc.
+#***********************************************************************
+  if (\`cat ${CCM45_DBlog}/Lista.SQL|grep "stopro.sql" |wc -l\` != 0) then
+    remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR}; ./AggiornaStopro"
+  endif
+  remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR};./Lanciastoproc.ksh"
+  
+#***********************************************************************
+# Lancio script per aggiustamento sql
+#***********************************************************************
+  remsh c-gpm1-c -l dsim -n "cd ${SISO_SCRIPT_DIR};./Lanciaprobj.ksh"
+
+
+#***********************************************************************
+# Lancio la script della Battistelli per completare le compilazioni
+#***********************************************************************
+  remsh c-gpm1-c -l dsim  -n "${SISO_SCRIPT_DIR}/Instpatch.ksh"
+  set CodErrore = \${status}
+  echo "CodErrore ha valore: \${CodErrore}" >> ${PROBLEM_LOG} 
+
+#************************************************************************
+# Possono essere codificati tre tipi di errore; modifichero' le 
+# script di Battistelli in maniera che la codifica sia la seguente:
+# codice = 1 per errore codificato con informazione nel log
+# codice = 2 per errore dovuto a mancata variabile nel CONFIG_FILE
+# codice = 3 se manca una delle script da lanciare
+# codice = 4 se non e' leggibile il CONFIG_FILE
+# codice = 5 se non esiste il CONFIG_FILE
+#************************************************************************
+  ccm query -t task -n task$4
+  if (\${CodErrore}) then
+    if (\${CodErrore} == 5) then
+      set Description = "ERRORE: Il CONFIG_FILE non esiste.Verificare e rieseguire Instpatch.ksh" 
+    endif
+    if (\${CodErrore} == 4) then
+      set Description = "ERRORE: Il CONFIG_FILE esiste ma non e'leggibile. Verificare i permessi e rieseguire Instpatch.ksh"
+    endif
+    if (\${CodErrore} == 3) then
+      set Description = "ERRORE: manca una delle script; controllare CONFIG_FILE e rieseguire Instpatch.ksh"
+    endif
+    if (\${CodErrore} == 2) then
+      set Description = "ERRORE: manca una delle variabili; controllare CONFIG_FILE e rieseguire Instpatch.ksh"
+    endif
+    if (\${CodErrore} == 1) then
+      set Description = "ERRORE: controllare il file instpatch.log e rieseguire Instpatch.ksh"
+    endif
+  else
+    set Description = "Instpatch.ksh Completato correttamente. Si possono ora eseguire tutti i check" 
+  endif
+else
+  set Description = "Task creato corretamente. Si puo' proseguire con la migrazione"
+endif
+
+ccm query -t task -n task$4
+ccm attr -c task_description -t string -v "\${Description}" @1
+if (\${status}) then
+  ccm attr -m task_description -v "\${Description}" @1
+endif
+set old_synps = \`ccm attr -s task_synopsis @1\`
+if (( $1 == "Compilaz.Patch" )||( $1 == "Compilaz.Fix" )) then
+  set synps = "Compilazione patch ${PROGETTO}${COMITVER}~\${old_synps}"
+else
+  set synps = "Compilazione baseline ${PROGETTO}${COMITVER}~\${old_synps}"
+endif
+ccm attr -m task_synopsis -v "\${synps}" @1
+ccm attr -m resolver -v $7 @1
+
+
+ccm stop
+rm ${CCM45_DBlog}/DataMig.LOCK
+#***********************************************************************
+# Fine Preparazione script
+#***********************************************************************
+EndOfInput1
+
+echo "MSG:UnixLogfile:${CCM45_DBlog}/DataMig.LOCK"
+echo "MSG: "
+
+#***********************************************************************
+# L'utente puo' scollegarsi. Faccio partire lo script
+#***********************************************************************
+#source ${CCM45_DBlog}/DoMig.Datamat &

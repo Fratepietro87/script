@@ -1,0 +1,51 @@
+#!/bin/csh -x
+#*********************************************************************
+#                 GeneraDeltaSql
+# 
+# Goal: nel caso una patch abbia generato un patch.sql, calcolo il Delta 
+#       rispetto al precedente
+# 
+# Parametri passati: $1 nome del patch.sql
+#                    $2 nome del precedente patch.sql
+#                    $3 nome file delta sql
+#                    $4 file lst
+#                    $5 nuovo nome dell'sql
+# 
+# Creator: Luca Brizzolara December 1999
+# Modified: Barbara Battistelli (Comitsiel) 
+#*********************************************************************
+set CM45_DIR="/u/dsim/CM45_DIR"
+set SCRIPT_DIR="${CM45_DIR}/SCRIPT"
+set LOG_DIR="${CM45_DIR}/LOG"
+set GENERADELTA_LOG="${LOG_DIR}/generadelta.log"
+set CONFIG_FILE="${SCRIPT_DIR}/Config_file"
+set TODAY="`date +%d-%b-%y %H:%M:%S`"
+
+
+set VDB = "start vdb.plb"
+set SQL_DIR = "/u/dsim/sql"
+set LOG_DIR = "/u/dsim/CM45_DIR/LOG"
+
+set SQL_NAME = "${SQL_DIR}/$1"
+set LAST_SQL = "${SQL_DIR}/$2"
+set DELTA_SQL = "${SQL_DIR}/$3"
+set LST_FILE = "${LOG_DIR}/$4"
+set NEW_SQL = "${SQL_DIR}/$5"
+
+echo "$TODAY $0 : START">>$GENERADELTA_LOG
+
+if ( $1 == "" || $2 == "" || $3 == "" || $4 == "" || $5 == "" || ! -e ${SQL_NAME} || ! -e ${LAST_SQL} ) then
+	echo "${TODAY} $0 : Errore! Possibili cause: Variabili passate dalla DoMig.Datamat con valore NULL opp ${SQL_NAME} o  ${LAST_SQL} inesistenti (exit 1)">>$GENERADELTA_LOG
+	exit 1
+endif
+
+echo "spool $LST_FILE" > ${DELTA_SQL}
+echo "$VDB" >> ${DELTA_SQL}
+if (`echo $2 |grep "NoNumber"|wc -l` == 0) then
+  #diff -b -e ${LAST_SQL} ${SQL_NAME} |awk '/ {1,}/' >> ${DELTA_SQL}
+  diff -wb ${LAST_SQL} ${SQL_NAME} |grep ">"|sed '1,$s/\> //'>> ${DELTA_SQL}
+else
+  cat ${SQL_NAME} >> ${DELTA_SQL}
+endif
+echo "spool off" >> ${DELTA_SQL}
+mv ${SQL_NAME} ${NEW_SQL}

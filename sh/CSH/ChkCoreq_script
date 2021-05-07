@@ -1,0 +1,60 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* ChkCoreq_script IBM AIX CSHELL Script for Coreq-Check.
+#*
+#* This is a RECURSIVE Script... Be carefull.
+#*
+#* Author: Cavana Carlo 1999
+#* Modified: Brizzolara Luca 1999
+#*
+#* Modificato per inserire nella lista dei corequisiti anche quelli di
+#* consegne non ancora migrate
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log"
+
+if ($#argv == 2) then
+  set firstconsegna = $2
+  echo ${firstconsegna} > ${CCM45_DBlog}/ChkCoreq.$1.tmp 
+  echo ${firstconsegna} > ${CCM45_DBlog}/ChkCoreq.$1.log 
+  echo "I Corequisiti della consegna $2 sono:"
+else
+  set firstconsegna = $3
+endif
+
+set consegna = $2
+
+set corequire = `grep "COREQUISIT:" ${CCM45_DBlog}/Delta.${consegna} | awk -FCOREQUISIT: '{print ($2)}'`
+set ncorq = `echo ${corequire} | awk '{print split($1,corq,",")}'`
+
+#       ****************************************************************
+#       Looping for ncorq = corequisits
+#       ****************************************************************
+
+set p = 0
+while ($p < ${ncorq})
+  @ p++
+  set corqname = `echo ${corequire} | awk '{split($1,corq,",")} {print corq['$p']}'`
+  if ((-f ${CCM45_DBlog}/Delta.${corqname}) || (-f ${CCM45_DBlog2}/Delta.${corqname})) then
+    if !(${firstconsegna} == ${corqname}  || `grep -c ${corqname} ${CCM45_DBlog}/ChkCoreq.$1.tmp` == 8) then
+      if (`grep -c ${corqname} ${CCM45_DBlog}/ChkCoreq.$1.tmp` == 0) then
+        echo ${corqname}
+        set tmp = `cat ${CCM45_DBlog}/ChkCoreq.$1.log`
+        printf "%s,%s" $tmp ${corqname} > ${CCM45_DBlog}/ChkCoreq.$1.log
+      endif
+      echo ${corqname} >> ${CCM45_DBlog}/ChkCoreq.$1.tmp 
+      ${SCRIPT_DIR}/ChkCoreq_script $1 ${corqname} ${consegna}
+    endif
+  else
+    if (`grep -c ${corqname} ${CCM45_DBlog}/ChkCoreq.$1.tmp` == 0) then
+      echo ${corqname}
+      set tmp = `cat ${CCM45_DBlog}/ChkCoreq.$1.log`
+      printf "%s,%s" $tmp ${corqname} > ${CCM45_DBlog}/ChkCoreq.$1.log
+    endif
+  endif
+end
+

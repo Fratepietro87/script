@@ -1,0 +1,1285 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* UpFldSWD_script IBM AIX CSHELL Script for Folder Update. 
+#*
+#* This is a RECURSIVE Script... Be carefull. 
+#*  
+#* Looking for Extraction of consegne (ready) without ???_FOLDER_UPDATE
+#* label. If consegna is ready, check prerequisiti and corequisiti.
+#* After that, put the new one (consegna) into the REL~CMenv folder.
+#*
+#* Parametri passati: $1 Ambiente (CSU o SQA o PRD)
+#*                    $2 Action (UpDate o LoopUpDate)
+#*                    $3 Progetto (CAS, SCF, ... o Any)
+#*                    $4 cod_opzione
+#*                    $5 Numero Task
+#*
+#* Author: Cavana Carlo 1998
+#* Modified: Brizzolara Luca 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+# **********************************************************************
+# Impostazione delle variabili - commento di Romanini -  
+# **********************************************************************
+
+set doloop = 0
+set repeat = 0
+set Ntask  = $5
+set CMenv  = $1 
+set cmenv  = `echo $1 |  awk '{print tolower($1)}'`
+set data   = `date +"%d-%m-%y"`
+set datatime = `date +"%d %h %Y"`
+set SWD_ROOT = "/usr/CONT_SRV/SWD_FIL"
+set WA_ROOT  = "/usr/CONT_SRV/ccm_wa/DB_FIL"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log"
+set ListaAmbiente = "${CCM45_DBlog}/WSOD.$1"
+set ListaAmbTemp = "${CCM45_DBlog}/WSOD.$1.tmp"
+set ElencoDeltaWSOD = "${CCM45_DBlog}/ElencoDeltaWSOD"
+set CpkZip_Recovery = 0
+set cpk_error = 0                      
+
+# **********************************************************************
+# Actions check
+# **********************************************************************
+
+# ********************************************************************************************
+# Se il secondo parametro passato a UpFldSWD_script ($2) e' "Update" (che penso sia la        
+# chiamata normale allo script) allora controlla che esista il file SWD_UPDATE.ambiente.LOCK. 
+# Se questo file esiste significa che e' in corso una estrazione per quell'ambiente: viene    
+# dato un messaggio all'utente ed esce dal programma (exit 1).                                
+# Se questo file esiste e dentro di se ha la stringa "ERROR:", allora significa che           
+# l'estrazione in corso ha avuto un problema nel fare gli zip, e in questo caso si salta      
+# alla "label" di "recupero errore zip" (CpkZipErr_Recovery), dopo avere impostato            
+# lo switch CpkZip_Recovery a 1.                                                              
+# -  commento di Romanini -                                                                   
+# *******************************************************************************************
+
+if ($2 == UpDate) then
+  if (-f ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK) then
+    if (`cat ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK | grep -c ERROR:`) then
+      set Ntask  = `cat ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK | awk -F"~" '{print ($2)}'`
+      set CpkZip_Recovery = 1
+      goto CpkZipErr_Recovery
+    endif
+    echo "- ERRORE - Estrazione SW ${CMenv} in corso." >>&/$CCM45_DBlog/ErrMsg
+    exit 1
+  endif
+                                                     
+# **********************************************************************
+# "cat /dev/null > file", pulisce il file di arrivo. 
+# Se il file non esiste lo crea (pulito).            
+# - commento di Romanini -                           
+# **********************************************************************
+                                                     
+  cat /dev/null > ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK
+  cat /dev/null > ${CCM45_DBlog}/${CMenv}_BND.LST.TMP  
+  cat /dev/null > ${CCM45_DBlog}/SUBSYS_RELATE.${CMenv}
+endif
+
+
+
+
+# ***********************************************************************************
+# Verifica le condizioni iniziali di estrazione:                                  
+# - che l'ambiente sia CSU,SQA,PRD                                                
+# - che l'azione ("action") sia "UpDate"                                          
+# - che il "cod_opzione" sia "Estraz.Delta" oppure "Estraz.Master"                
+# - che i parametri passati siano in numero di 5 ($#arg)                          
+# Da notare che la variabile $#argv contiene il numero dei parametri passati      
+# alla presente script (che e' fisso e pari a 5).                                 
+# La variabile $argv inveve contiene i valori dei parametri, separati da spazi.   
+# $argv e $#argv sono due variabili della cshell, destinate ad ospitare,          
+# rispettivamente, i valori dei parametri passati a una script da un'altra script 
+# e il numero di questi parametri.                                                
+# I parametri passati a una script e depositati nella variabile $argv possono     
+# essere in numero fisso o variabile.                                             
+# - commento di Romanini -                                                        
+# ***********************************************************************************
+
+
+if (($1 == CSU || $1 == SQA || $1 == PRD) && ($2 == UpDate) && ($4 == "Estraz.Delta" || $4 == "Estraz.Master") && ($#argv == 5)) then
+
+# ***************************************************************************
+# Viene lanciato Continuus in background senza interfaccia grafica (-nogui), 
+# con l'utente ccm_root e il ruolo "build manager".                                                    
+# - commento di Romanini -                                                                
+# ***************************************************************************
+
+  setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}`
+
+
+#   **************************************************************************
+#   If it's called from crontab, create Delta-task 
+#   **************************************************************************
+#   Se UpFldSWD_script e' chiamato dal crontab, viene creato (then) il task di      
+#   estrazione con i suoi attributi;                                         
+#   se invece UpFldSWD_script e' lanciato tramite interfaccia grafica        
+#   e quindi tramite la script ExtractSWD_script, vengono modificati (else)         
+#   gli attributi del task.                                                  
+#   - commento di Romanini -                                                 
+#   **************************************************************************     
+                                                                             
+
+  if ($5 == 0) then
+    set Ntask = `ccm create_task -s "$4 $3 ${CMenv} $datatime" -r ccm_root -platform AIX-DB_FIL -release Any -subsystem Any | awk '{print ($2)}'`
+    ccm query -t task -n task$Ntask
+    ccm attr -c cod_opzione -t string -v "$4" @1
+    ccm attr -c comitver -t string -v ${CMenv} @1
+    ccm attr -m resolver -v " " @1
+    echo `date` "-TASK$Ntask- $4 $3 ${CMenv} $datatime" >>&/$CCM45_DBlog/ErrMsg
+  else
+                                                                                       
+# *************************************************************************************     
+# la query seguente ha il formato "%task_synopsis", cioe' restituisce il               
+# synopsis del task specificato; l'opzione "-u" elimina il numero d'ordine della query 
+# (cioe' quello che viene poi referenziato con la @).                                  
+# - commento di Romanini -                                                             
+# *************************************************************************************     
+
+    set synps = `ccm query -t task -n task$5 -u -f "%task_synopsis"`
+                                                                                
+# *************************************************************************************     
+# A "printf" si da il formato "%s  %s " (con queste spaziature), per accodare,  
+# sulla stessa riga, la stringa "$4 $3 ${CMenv} $datatime" e la stringa $synps. 
+# In questo modo si compone il synopsis del task.                               
+#  - commento di Romanini -                                                     
+# *************************************************************************************     
+    set synps = `printf "%s  %s " "$4 $3 ${CMenv} $datatime" $synps`
+    ccm attr -m task_synopsis -v "$synps" @1
+    ccm attr -m resolver -v " " @1
+    ccm attr -m platform -v AIX-DB_FIL @1
+    ccm attr -m release -v Any @1
+    ccm attr -m subsystem -v Any @1
+    ccm attr -c comitver -t string -v "${CMenv}" @1
+    if ($status) then
+      ccm attr -m comitver -v "${CMenv}" @1
+    endif
+    echo `date` "-TASK$5- $synps" >>&/$CCM45_DBlog/ErrMsg
+  endif
+
+else
+
+# **********************************************************************
+# La "else" precedente si riferisce alla                                                          
+# "if (($1 == CSU || $1 == SQA || $1 == PRD) && ($2 == UpDate) && ..ecc."                         
+# Questo ramo "else" indica che se non sono verificate tutte le condizioni iniziali di estrazione 
+# allora:                                                                                         
+# se l'azione ("action") e' "LoopUpDate",da il messaggio di errore che la script UpFldSWD_script  
+# deve essere lanciata con l'"action" UpDate, ed esce con exit 1 (return code della presente      
+# script e' 1).                                                                                   
+# - commento di Romanini -                                                      
+# **********************************************************************
+                  
+  if !(($1 == CSU || $1 == SQA || $1 == PRD) && ($2 == LoopUpDate) && ($4 == "Estraz.Delta" || $4 == "Estraz.Master") && ($#argv == 5)) then
+    echo Error Parameter. Usage: UpFldSWD_script \[CSU or SQA or PRD\] \[UpDate\] \[Any or SCF,DIA,...\] \[Estraz.Delta or Estraz.Master\] \[0\]
+    exit 1
+  endif
+endif
+
+# **********************************************************************
+# Set fname in order to know wich consegna needs action.
+#
+# Now verify the life-cicle order CSU -> SQA -> PRD
+#                                                                                       
+# In base all'ambiente per cui faccio la consegna, imposto la variabile "i".            
+# Se c'e' ad es. CSU_FOLDER_UPDATE ,seguito dalla data,                                 
+# in un file Delta.????????, quella consegna e'                                         
+# estratta e distribuita in CSU (valore di $i e' 1).                                    
+#                                                                                       
+# Se non c'e' nessuna di queste stringhe (CSU_FOLDER_UPDATE, ecc.)                      
+# vuol dire che la consegna potrebbe essere buona per essere                            
+# estratta in CSU.                                                                      
+#                                                                                       
+# Se ce n'e' una, di queste stringhe , significa che la consegna potrebbe essere buona  
+# per essere estratta in SQA.                                                           
+#                                                                                       
+# Se ce ne sono due, significa che la consegna potrebbe essere buona per essere         
+# estratta in PRD.                                                                      
+# - commento di Romanini -                                                      
+# **********************************************************************                
+                                                                                        
+
+if ($1 == CSU) then
+  set i = 0
+else if ($1 == SQA) then
+       set i = 1
+     else if ($1 == PRD) then
+            set i = 2
+          endif
+     endif
+endif
+
+
+if ($3 == Any) then
+
+# *********************************************************************************           
+# Estrazione "any" (qualunque progetto) ($3=Progetto)                                         
+# *********************************************************************************           
+# Il "grep -c -E "CSU_FOLDER_UPDATE|SQA_FOLDER ... ecc." sui files Delta.????????             
+# (ove "?????" e' una wild card e viene risolta con tutti i files Delta.* nel log),           
+# conta il numero di occorrenze delle stringhe specificate (CSU_FOLDER ecc.)                  
+# per ciascuno dei files Delta.                                                               
+# Questo numero e' messo a fianco di ciascun file delta e preceduto da ":".                   
+#                                                                                             
+# In fname c'e' dunque il risultato di questa "grep" che e':                                  
+# la lista delle consegne da considerare per l'ambiente, cioe' la lista dei file Delta.xxxxx  
+# con a fianco il numero spiegato sopra, preceduto da ":" (consiglio di provare da            
+# linea di comando).                                                                          
+#  - commento di Romanini -                                                                   
+# *********************************************************************************           
+                                                                                              
+  set fname = `grep -c -E "CSU_FOLDER_UPDATE|SQA_FOLDER_UPDATE|PRD_FOLDER_UPDATE" ${CCM45_DBlog}/Delta.???????? | grep :$i | awk -F: '{print ($1)}' | awk -F. '{print ($2)}'`
+
+else
+                                                    
+# *********************************************************************************           
+# (... else) Estrazione per progetto ($3=Progetto)  
+#  - commento di Romanini -                         
+# *********************************************************************************           
+
+  set grepbug = `grep -c -E "CSU_FOLDER_UPDATE|SQA_FOLDER_UPDATE|PRD_FOLDER_UPDATE" ${CCM45_DBlog}/Delta.$3?????`
+
+  if ($#grepbug == 1) then
+                                                                                  
+# *********************************************************************************           
+# Sembra che il cancelletto (#) posto tra $ e nome della variabile definisca          
+# una nuova variabile, che contiene il numero delle stringhe (separate da         
+# spazi), contenute nella variabile senza cancelletto (in questo caso $grepbug).  
+#
+# Se, nell'estrazione per progetto, c'e' un solo file Delta.proj?????, contenente una o piu',   
+# fra le stringhe CSU_FOLDER_UPDATE ecc. , allora controlla che                                 
+# quel file sia nell' ambiente preso in considerazione (CSU,SQA,PRD), utilizzando               
+# il "grep -c -E ecc.                                                                           
+# Se e' in quell'ambiente, imposta fname con il nome della consegna; altrimenti fname e' blank. 
+#  - commento di Romanini -                                                                     
+# *********************************************************************************           
+                                                                                                
+                                                                                  
+    if(`cat ${CCM45_DBlog}/Delta.$3????? | grep -c -E "CSU_FOLDER_UPDATE|SQA_FOLDER_UPDATE|PRD_FOLDER_UPDATE"` == $i) then
+      set fname = `ls ${CCM45_DBlog}/Delta.$3????? | awk -F. '{print ($2)}'`
+    else
+      set fname = ``
+    endif
+
+  else
+
+# *********************************************************************************           
+# (ramo "else" della "if ($#grepbug == 1)..."                                                    
+# Se, nell'estrazione per progetto, c'e' piu' di un file Delta.proj?????, con una o piu' fra     
+# le stringhe sopra specificate, allora estraggo la lista                                        
+# delle consegne per l'ambiente e imposto fname.                                                 
+#  - commento di Romanini -                                                                      
+# *********************************************************************************           
+                                                                                                 
+    set fname = `grep -c -E "CSU_FOLDER_UPDATE|SQA_FOLDER_UPDATE|PRD_FOLDER_UPDATE" ${CCM45_DBlog}/Delta.$3????? | grep :$i | awk -F: '{print ($1)}' | awk -F. '{print ($2)}'`
+
+  endif
+endif
+
+# **********************************************************************
+# Inizia il loop sulle consegne presenti in fname  
+#  - commento di Romanini -                        
+# **********************************************************************
+                                                   
+set fnum = `echo $#fname`
+set i = 0 
+
+# **********************************************************************
+# Looping for fnum = consegne
+# **********************************************************************
+
+while ($i < $fnum)
+  @ i++
+  set rel = `echo ${fname[$i]} | awk '{print substr($1,1,3)}'`
+  set ver = `echo ${fname[$i]} | awk '{print substr($1,4,5)}'`
+                                                                                          
+# **********************************************************************
+# Se tra i task di : migrazione(chk_sa), ...~CSU (cm_sesi), uscita dal csu(chk_csu),      
+# ...~SQA(cm_sesi) ,uscita dal Collaudo (chk_sqa),autorizzazione verso la prod(cm_sesi),  
+# di una consegna, ce n'e' anche solo uno in stato "registered" o "task_assign" ,         
+# questa consegna non e' pronta per essere estratta,                                      
+# QUALUNQUE SIA L'AMBIENTE CHE SI STA CONSIDERANDO                                        
+#  - commento di Romanini -                                                               
+# **********************************************************************
+                                                                                          
+
+  if (`ccm query "cvtype='task' and task_subsys='$rel' and comitver='$ver' and (status='task_assigned' or status='registered')" | grep -c task`) then
+                                                                                         
+
+# **********************************************************************
+# la if precedente valuta il risultato numerico di un'istruzione o di un insieme di      
+# istruzioni: se il risultato e' > 0 cade nel ramo "then" , altrimenti cade nell'"else"  
+#  - commento di Romanini -                                                              
+# **********************************************************************
+                                                                                         
+    echo "Warning:" Consegna NON pronta per ${CMenv} ${fname[$i]} >>&/$CCM45_DBlog/ErrMsg
+
+  else
+
+    echo Consegna pronta per ${CMenv} ${fname[$i]} >>&/$CCM45_DBlog/ErrMsg
+                                                                                                
+# **********************************************************************
+# Se la consegna considerata e' pronta per essere estratta, quello che viene fatto in seguito   
+# e':                                                                                           
+#  Controllo dei prerequisiti e corequisiti: E' RICORSIVO, infatti UpFldSWD_script chiama       
+#  se stesso per eseguire il controllo dei corequisiti e prerequisiti di ogni consegna          
+#  da estrarre.                                                                                 
+#                                                                                               
+#  (NON HO APPROFONDITO QUESTA PARTE)                                                           
+#                                                                                               
+#  - commento di Romanini -                                                                     
+# **********************************************************************
+
+#       ****************************************************************
+#       Looping for ncorq = corequisits
+#       ****************************************************************
+
+    ${EXE_DIR}/ChkCoreq_script ${CMenv} $rel$ver 
+
+    set corequire = `cat ${CCM45_DBlog}/ChkCoreq.${CMenv}.log`
+    set ncorq = `echo ${corequire} | awk '{print split($1,corq,",")}'`
+        
+    rm ${CCM45_DBlog}/ChkCoreq.${CMenv}.*
+
+    set p = 0 
+    while ($p < ${ncorq})
+      @ p++
+      set corqname = `echo ${corequire} | awk '{split($1,corq,",")} {print corq['$p']}'`
+      set coreq_rel = `echo ${corqname} | awk '{print substr($1,1,3)}'`
+      set coreq_ver = `echo ${corqname} | awk '{print substr($1,4,5)}'`
+      if (`ccm query "cvtype='task' and task_subsys='${coreq_rel}' and comitver='${coreq_ver}' and status='completed'" | grep -c task` != 0 ) then
+        if (`ccm query "cvtype='task' and task_subsys='${coreq_rel}' and comitver='${coreq_ver}' and (status='task_assigned')" | grep -c task`) then
+          set repeat = 1
+          echo "Warning:" Consegna ${fname[$i]} Rifiutata. Corequisito ${corqname} NON pronto per ${CMenv} >>&/$CCM45_DBlog/ErrMsg
+          goto skip
+        endif 
+      else 
+        set repeat = 1
+        echo "Warning:" Consegna ${fname[$i]} Rifiutata. Corequisito $corqname NON ancora migrato per ${CMenv} >>&/$CCM45_DBlog/ErrMsg
+        goto skip
+      endif 
+    end
+
+#       ****************************************************************
+#       Looping for npreq = prerequisits
+#       ****************************************************************
+
+    set prerequire = `grep "PREREQUISIT:" ${CCM45_DBlog}/Delta.${rel}${ver} | awk -FPREREQUISIT: '{print ($2)}'`
+    set npreq = `echo ${prerequire} | awk '{print split($1,preq,",")}'`
+
+    set p = 0 
+    while ($p < ${npreq})
+      @ p++
+      set preqname = `echo ${prerequire} | awk '{split($1,preq,",")} {print preq['$p']}'`
+      if (-f ${CCM45_DBlog}/Delta.${preqname}) then  
+        if !(`grep -c "${CMenv}_FOLDER_UPDATE" ${CCM45_DBlog}/Delta.${preqname}`) then
+          echo "Warning:" Consegna ${fname[$i]} Rifiutata. Prerequisito ${preqname} NON pronto per ${CMenv} >>&/$CCM45_DBlog/ErrMsg
+          set repeat = 1
+          goto skip
+        endif
+      else
+        if (-f ${CCM45_DBlog2}/Delta.${preqname}) then
+          if !(`grep -c "${CMenv}_FOLDER_UPDATE" ${CCM45_DBlog2}/Delta.${preqname}`) then
+            echo "Warning:" Consegna ${fname[$i]} Rifiutata. Prerequisito ${preqname} NON pronto per ${CMenv} >>&/$CCM45_DBlog/ErrMsg
+            set repeat = 1
+            goto skip
+          endif
+        else
+          echo "Warning:" Consegna ${fname[$i]} Rifiutata. Il Prerequisito ${preqname} NON esiste >>&/$CCM45_DBlog/ErrMsg
+          set repeat = 1
+          goto skip
+        endif 
+      endif 
+    end
+
+
+# **********************************************************************
+# VER e' la release (ad es. CAS20)           
+#  - commento di Romanini -                  
+# **********************************************************************
+
+    set VER = `echo ${rel}${ver} | awk '{print substr($1,1,5)}'`
+
+                                                                                                 
+# **********************************************************************
+# In tname viene posto il numero del/dei task specificato/i dalla query sotto.                   
+# In tname potrebbe esserci anche solo blank.                                                    
+# Ad es. per DIA21024 il risultato della query sono i numeri task seguenti:                      
+#   6359,6361 (due task).                                                                        
+#                                                                                                
+# Questo e' il contenuto di tname: e' l'elenco dei task completati per una data consegna.        
+# Non dimentichiamo che la consegna considerata e' candidata all'estrazione: i task completati   
+# sono dunque quelli che precedono l'estrazione per l'ambiente che si sta considerando.          
+#  - commento di Romanini -                                                                      
+# **********************************************************************
+                                                                                                 
+    set tname = `ccm query "cvtype='task' and task_subsys='${rel}' and comitver='${ver}' and (status='completed')" | awk '{print ($2)}'`
+                                                                    
+# **********************************************************************
+# imposto in tnum il numero dei task elencati nella variabile tname 
+#  - commento di Romanini -                                         
+# **********************************************************************
+
+    set tnum = `echo $#tname`
+
+    set j = 0
+
+# **********************************************************************
+# Se tnum e' > 0 , allora crea il task ghost per l'ambiente (es, DIA21024~CSU) 
+#  - commento di Romanini -                                                    
+# **********************************************************************
+
+
+    if ( ${tnum} ) then
+                                                                                           
+
+# **********************************************************************
+# Il seguente comando imposta in regtsk il numero assegnato al task che viene creato       
+# con il comando "ccm create_task"; il risultato di tale comando e' una stringa del tipo:  
+# "Task 4386 created".                                                                     
+# L'awk che segue,che ha come separatore blank (default),                                  
+# fa la "print" del numero task (secondo campo, $2)                                        
+#  - commento di Romanini -                                                                
+# **********************************************************************
+                                                                                           
+
+      set regtsk = `ccm create_task -s "${rel}${ver}~${CMenv}" -platform AIX-DB_FIL -release ${VER} -subsystem ${rel} | awk '{print ($2)}'`
+                                                                                          
+
+# **********************************************************************
+# I successivi comandi, creano nel task appena creato, gli attributi comitver (es. 21024) 
+# e cod_opzione (ambiente, es. CSU)                                                       
+#  - commento di Romanini -                                                               
+# **********************************************************************
+                                                                                          
+      ccm query -t task -name task${regtsk}
+      ccm attr -c comitver -t string -v ${ver} @1
+      ccm attr -c cod_opzione -t string -v "${CMenv}" @1
+    endif
+
+
+# **********************************************************************
+# Inizia il ciclo in cui vengono scanditi i task presenti nella variabile tname, per cercarne  
+# gli oggetti associati, e associarli al task ghost appena creato.                             
+# - commento di Romanini -                                                                     
+# **********************************************************************
+                                                                                               
+    while ($j < ${tnum})
+      @ j++
+      echo ${tname[$j]}
+      set Creator = `ccm query -t task -n task${tname[$j]} -u -f "%creator"`
+      if (${Creator} == "mig_sa") then
+        set ORIG_SYNOPSIS = `ccm query -t task -n task${tname[$j]} -u -f "%task_synopsis"|awk -F"~MIG Migrazione " '{ print $2 }'`
+        set PREREQ_LST = `ccm query -t task -n task${tname[$j]} -u -f "%prerequisiti"`
+        set COREQ_LST = `ccm query -t task -n task${tname[$j]} -u -f "%corequisiti"`
+        set synps = "${rel}${ver}~${CMenv}   ${ORIG_SYNOPSIS}"
+        ccm query -t task -n task${regtsk}
+        ccm attr -m task_synopsis -v "${synps}" @1
+        ccm attr -c prerequisiti -t string -v "${PREREQ_LST}" @1
+        if (${status})  then
+          ccm attr -m prerequisiti -v "${PREREQ_LST}" @1
+        endif
+        ccm attr -c corequisiti -t string -v "${COREQ_LST}" @1
+        if (${status})  then
+          ccm attr -m corequisiti -v "${COREQ_LST}" @1
+        endif
+      endif
+
+# **********************************************************************
+# La query seguente cerca, con il formato %objectname (nome-versione:tipo:istanza), gli oggetti    
+# associati,in ogni task, il cui numero task e' fra quelli elencati nella variabile tname.         
+# Gli oggetti che risultano dalla query vengono passati, come argomenti, tramite xargs, al comando 
+# "ccm relate", che associa questi stessi oggetti al task ghost appena creato.                     
+#                                                                                                  
+# xargs -i (ReplaceString (Uppercase i)) :
+# Inserisce ciascuna linea dello standard input come un argomento              
+# per il parametro del comando (ccm relate ).                                            
+# Specificando "{}" non si specifica il parametro del comando, quindi viene passato                
+# a "ccm relate" direttamente lo standard input di xargs (cioe' gli oggetti del task esaminato     
+# nella query precedente).                                                                         
+#                                                                                                  
+# Il comando "ccm relate" aggiunge una relazione (associated_cv) tra il task ghost (-from...)        
+# e l'argomento passato da xargs (gli oggetti da associare; -to {}).                               
+#   - commento di Romanini -                                                                       
+# **********************************************************************
+                                                                                                   
+      ccm query "is_associated_object_of('task${tname[$j]}~1:task:probtrac')" -u -f "%objectname" | xargs -i ccm relate -n associated_cv -from task${regtsk}~1:task:probtrac -to {}
+      set doloop = 1
+    end
+
+
+    if ( ${tnum} ) then
+
+# **********************************************************************
+# Se tnum e' > 0 , allora esiste il task ghost per l'ambiente (es, TLX10000~CSU).          
+# Il task ghost popola il folder (istruzione "ccm folder -modify -add_task ecc.);          
+# poi viene scritto il file                                                                
+# /usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log/SUBSYS_RELATE.${CMenv} (siamo in un ciclo)     
+# con le stringhe "numero.taskghost-nome.taskghost" separate da spazi.                     
+# Al task ghost viene anche assegnato il "resolver" che e' cm_sesi                         
+# (notare che scrivere @ e' equivalente a scrivere @1).                                    
+# - commento di Romanini -                                                                 
+# **********************************************************************
+                                                                                           
+      ccm query "cvtype='folder' and folder_subsys='${rel}~${CMenv}'"
+      ccm folder -modify -add_task ${regtsk} @
+      set list = `cat  ${CCM45_DBlog}/SUBSYS_RELATE.${CMenv}`
+      printf "%s %s " "${regtsk}-${rel}${ver}" $list > ${CCM45_DBlog}/SUBSYS_RELATE.${CMenv}
+      ccm query -t task -name task${regtsk}
+      ccm attr -m resolver -v "${cmenv}_sesi" @1
+    endif
+                                                                            
+# **********************************************************************
+# Scrive ad es. ${CMenv}_FOLDER_UPDATE.$data nel file Delta.${rel}${ver}    
+# (ad es. CSU_FOLDER_UPDATE.01-02-2000 in Delta.DIA21023)                   
+# - commento di Romanini -                                                  
+# **********************************************************************
+                                                                            
+    echo ${CMenv}_FOLDER_UPDATE.$data >> ${CCM45_DBlog}/Delta.${rel}${ver}
+
+    if !(`grep ${rel} ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK` == ${rel}) then
+                                                                                           
+# **********************************************************************
+# Se ${rel} (cioe' il progetto) non e' nel file SWD_UPDATE.${CMenv}.LOCK, vi viene scritto 
+# - commento di Romanini -                                                                 
+# **********************************************************************
+                                                                                           
+      echo ${rel} >> ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK
+
+    endif
+  endif
+
+
+skip:
+
+# **********************************************************************
+# "skip" e' la label a cui salta il controllo dei coreq./prereq., per la chiamata            
+# ricorsiva di UpFldSWD_script                                                               
+# - commento di Romanini -                                                                   
+# **********************************************************************
+                                                                                             
+end
+                                                                
+
+# **********************************************************************
+# Fine del ciclo sulle consegne presenti in fname e da estrarre 
+# - commento di Romanini -                                      
+# **********************************************************************
+                                                                
+
+
+# **********************************************************************
+#  RECUSIVE SESSION...  Be carefull. 
+# **********************************************************************
+
+if (${repeat} && ${doloop}) then
+  ${EXE_DIR}/UpFldSWD_script $1 LoopUpDate $3 $4 ${Ntask}
+endif
+
+# **********************************************************************
+# Jump here only one time. 
+# **********************************************************************
+
+if ($2 == UpDate) then
+  if (-d ${SWD_ROOT}/$1) then
+    if (-d ${SWD_ROOT}/$1.sav) then
+      rm -rf ${SWD_ROOT}/$1.sav
+    endif
+    mv ${SWD_ROOT}/$1 ${SWD_ROOT}/$1.sav
+  endif
+  if (-d ${SWD_ROOT}/$1_WSOD) then
+    if (-d ${SWD_ROOT}/$1_WSOD.sav) then
+      rm -rf ${SWD_ROOT}/$1_WSOD.sav
+    endif
+    mv ${SWD_ROOT}/$1_WSOD ${SWD_ROOT}/$1_WSOD.sav
+  endif
+
+#   ********************************************************************
+#   Parameters check... now can loop for Estraz.Master or Estraz.Delta
+#   and for specific (DIA,CAS,CSU...) consegna or Any consegna. 
+#   ********************************************************************
+
+  if ($3 == Any && $4 == "Estraz.Master") then
+
+
+# **********************************************************************
+# l'istruzione sotto lista tutti i progetti (studiarsi questa "grep") 
+# - commento di Romanini -                                            
+# **********************************************************************
+                                                                      
+    set flist = `ccm query -t project | grep "\~CSU           "|awk -F"~" '{print ($1)}'|awk '{print($2)}'`
+
+  else
+    if ($3 != Any && $4 == "Estraz.Master") then
+      set flist = $3 
+    else
+      set flist = `cat ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK`
+    endif
+  endif
+
+
+# **********************************************************************
+# Qui abbiamo il ciclo , per ogni progetto coinvolto , per estrarre il software              
+# in un dato ambiente (~$1):                                                                 
+# vale sia se abbiamo dichiarato "Estraz. Delta" sia se abbiamo dichiarato "Estraz. Master"  
+# - commento di Romanini -                                                                   
+# **********************************************************************
+                                                                                             
+
+  foreach kind (${flist})
+
+
+# **********************************************************************
+# Si da il comando "ccm work_area" sostanzialmente per CREARE e MANTENERE (-wa) la work_area 
+# non nella home directory dell'utente che sta lavorando (per la script e' ccm_root          
+# e la sua home dir. e' /usr/local/ccm45), bensi' nel file system indicato dall'opzione      
+# "-sethpath".                                                                               
+# "ccm work_area"  viene dato per ogni progetto coinvolto (-p ${kind}~$1)                    
+# nell'ambiente per il quale si sta estraendo il software;                                   
+# infatti questa istruzione si trova nel ciclo sui progetti.                                 
+# Si da anche "ccm sync" per essere sicuri che CCM (Continuus) sincronizzi con il database   
+# (aggiorni) la work area settata precedentemente.                                           
+# - commento di Romanini -                                                                   
+# **********************************************************************
+                                                                                             
+    ccm work_area -wa -setpath ${WA_ROOT} -p ${kind}~$1
+    ccm sync -p ${kind}~$1
+
+                                                                                           
+# **********************************************************************
+# Se e' Estrazione Master, viene creato, vuoto, il file AftRec.${kind}.$1.                 
+#                                                                                          
+# Se e' Estrazione Any, viene fatta una query sugli oggetti del database                   
+# relativi al progetto in esame (${kind}) e all'ambiente in esame ($1);                    
+# la query e' fatta secondo il formato "oggetto"                                           
+# (nome.oggetto-versione:tipo:istanza cioe' %objectname,).                                 
+# Il risultato della query (cioe' l'elenco degli oggetti) e' messo in AftRec.${kind}.$1.   
+# - commento di Romanini -                                                                 
+# **********************************************************************
+                                                                                           
+    if ($4 == "Estraz.Master") then
+      cat /dev/null > ${CCM45_DBlog}/AftRec.${kind}.$1
+    else
+      ccm query "is_member_of('"''${kind}''"~"''$1''":project:1')" -u -f "%objectname" > ${CCM45_DBlog}/AftRec.${kind}.$1
+    endif
+
+                                                                                                  
+# **********************************************************************
+# Viene lanciata la reconfigure sulla work-area del progetto, per allinearne gli oggetti          
+# ai cambiamenti degli stessi, cambiamenti portati dai task in corso di estrazione;               
+# infatti,a questo punto, il folder e' gia' stato aggiornato con il/i task ghost,                 
+# e il folder e' utilizzato dalla "reconfigure".                                                  
+# Si esegue poi la stessa query vista prima e il risultato viene nesso nel file BfrRec.${kind}.   
+# Quindi si fa la "diff" tra i due files,(After e Before) e la si mette nel file Delta.${kind}.$1   
+# (Delta.CAS.CSU).                                                                                
+# - commento di Romanini -                                                                        
+# **********************************************************************
+                                                                                                  
+    ccm reconf  -p ${kind}~$1 
+    ccm query "is_member_of('"''${kind}''"~"''$1''":project:1')" -u -f "%objectname" > ${CCM45_DBlog}/BfrRec.${kind}.$1
+    diff -b -e ${CCM45_DBlog}/AftRec.${kind}.$1 ${CCM45_DBlog}/BfrRec.${kind}.$1 | awk '/ {1,}/' > ${CCM45_DBlog}/Delta.${kind}.$1
+
+    rm ${CCM45_DBlog}/AftRec.${kind}.$1
+    rm ${CCM45_DBlog}/BfrRec.${kind}.$1
+
+                                                                                                  
+# **********************************************************************
+# Di seguito: 
+# 
+# per "Estraz.Master" si apre il file Delta.${kind}.$1 (es. Delta.CAS.CSU), ottenuto dalla "diff" 
+# e vengono ricercati e passati allo script cpCCMfl_master gli oggetti "in uso" in quel progetto  
+# , per quell'ambiente.                                                                           
+# Cerco di illustrare qui l'istruzione usata che e':                                              
+#                                                                                                 
+# cat ${CCM45_DBlog}/Delta.${kind}.$1|grep -v ":dir:"|xargs ccm finduse|grep ${kind}~$1| (segue)  
+# |awk -F" " '{print ($1)}'|awk  -F"@" '{print ($1)}' (segue)                                     
+# |xargs ${EXE_DIR}/cpCCMfl_master ${SWD_ROOT} ${WA_ROOT} ${kind} $1                              
+#                                                                                                 
+# Il file Delta.${kind}.$1, nel caso di estrazione MASTER, contiene tutti gli oggetti di quel     
+# progetto ($kind), per quell'ambiente($1).                                                       
+# 1) si legge il file con "cat" (provare ad aprire un file tipo Delta.CAS.CSU sul /db_fil_log)    
+# 2) non si considerano le righe riferite a directories (prima "grep")                            
+# 3) per ogni file listato in Delta.${kind}.$1 (xargs), si fa "ccm finduse": il comando           
+#    "ccm finduse" cerca nel database gli usi di uno specifico oggetto e restituisce una          
+#    lista di riferimenti, che identificano in quali parti di quali progetti un oggetto           
+#    viene usato (con la versione con cui compare in Delta.${kind}.$1)                            
+# 4) si considerano solo le righe che fanno riferimento al progetto e all'ambiente considerati    
+#    (seconda "grep")                                                                             
+# 5) si isolano i nomi degli oggetti con la loro versione (es. PCT/pct/c/pactum/pactos2.exe~3)    
+#    (due "awk")                                                                                  
+# 6) si passano tali oggetti (tramite "xargs") come argomenti a cpCCMfl_master.                   
+#                                                                                                 
+#                                                                                                 
+# Per "Estrazione delta" si imposta la variabile "lista_consegne", con il risultato               
+# del "cat" del file /usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log/SUBSYS_RELATE.${CMenv},       
+# che contiene le stringhe "numero.taskghost-nome.taskghost" separate da spazi.              
+# Si ha un ciclo per ogni stringa (consegna) contenuta in "lista_consegne".                  
+# Per ogni consegna che appartiene al project che stiamo esaminando (${kind}),               
+# si eseguono le seguenti azioni:                                                            
+# 1) Si imposta la consegna (es. CAS20000) nella variabile "consegna"                        
+# 2) Si apre il file Delta.consegna (es. Delta.CAS20000),si considerano le sole stringhe     
+#    "ccm relate" e si scartano i soli oggetti "dir"; gli oggetti di altro tipo, nel         
+#    formato "oggetto" (nome.oggetto-versione:tipo:istanza cioe' %objectname,),              
+#    vengono passati tramite xargs alla script cpCCMfl_script.                               
+# 3) Siccome pero' nei file  Delta.consegna non ci sono gli oggetti aggiunti da dbl_sesi     
+#    e prc_sesi, questi vengono cercati e passati alla script cpCCMfl_script, sempre         
+#    tramite xargs: si fa un ciclo su tutti i task completati per quella consegna            
+#    e si cerca il task con risolutore "dbl_sesi" o "prc_sesi" : se c'e' si cerca            
+#    nel database, l'oggetto ad esso associato (in formato %objectname) e lo si passa        
+#    , tramite xargs, a cpCCMfl_script.                                                      
+# - commento di Romanini -                                                                   
+# **********************************************************************
+                                                                                             
+
+    if ($4 == "Estraz.Master") then
+      cat ${CCM45_DBlog}/Delta.${kind}.$1|grep -v ":dir:"|xargs ccm finduse|grep ${kind}~$1|awk -F" " '{print ($1)}'|awk -F"@" '{print ($1)}'|xargs ${EXE_DIR}/cpCCMfl_master ${SWD_ROOT} ${WA_ROOT} ${kind} $1
+    else
+      set lista_consegne = `cat ${CCM45_DBlog}/SUBSYS_RELATE.${CMenv}`
+      foreach task_consegna (${lista_consegne})
+        if(`echo ${task_consegna} |awk -F"-" '{ print substr($2,1,3) }'` == ${kind}) then
+          set consegna = `echo ${task_consegna} |awk -F"-" '{ print ($2)}'`
+          set delta_file = "${CCM45_DBlog}/Delta.${consegna}"
+          cat ${delta_file} |grep ccm |grep relate |grep -v ":dir:"|awk '{ print $8 }'|xargs ${EXE_DIR}/cpCCMfl_script ${SWD_ROOT} ${WA_ROOT} ${kind} $1
+          set rel = `echo ${consegna} |awk '{ print substr($1,1,3) }'`
+          set ver = `echo ${consegna} |awk '{ print substr($1,4,5) }'`
+          set tname = `ccm query "cvtype='task' and task_subsys='${rel}' and comitver='${ver}' and status='completed'" | awk '{print ($2)}'`
+          set tnum = `echo $#tname`
+          set j = 0
+          while ($j < ${tnum})
+            @ j++
+            set utente = `ccm query -t task -n task${tname[$j]} -f %resolver |awk '{ print $2 }'`
+            if ((${utente} == dbl_sesi) || (${utente} == prc_sesi)) then
+              ccm query "is_associated_object_of('task${tname[$j]}~1:task:probtrac')" -u -f "%objectname" |grep -v ":dir:"|xargs ${EXE_DIR}/cpCCMfl_script ${SWD_ROOT} ${WA_ROOT} ${kind} $1
+            endif
+          end
+        endif
+      end
+    endif
+  end
+
+#   ********************************************************************
+#   Refresh global BND list and move ${CMenv}_BND.LST 
+#   ********************************************************************
+
+# **********************************************************************
+# La query seguente e' formata in questo modo:                                                     
+# 1) la prima parte ricerca tutti gli oggetti che sono sotto il progetto Progetti_DB_FIL~ambiente: 
+#    essi sono i singoli progetti applicativi per quell'ambiente (CAS~ambiente, UTC~ambiente ecc.) 
+# 2) questi vengono passati alla seconda ccm query, tramite xargs, che, per ciascuno di essi,      
+#    ricerca gli oggetti di tipo "bind", cioe' i ".bnd".                                           
+#    Ne risulta una lista completa dei ".bnd" , in fomato "oggetto", per tutto il progetto         
+#    "Progetti_DB_FIL~ambiente" (fname), del tipo: pid.bnd~2:bind:1 storico.bnd~2:bind:1.          
+#    - commento di Romanini -                                                                      
+# **********************************************************************
+                                                                                                   
+
+  set fname = `ccm query "is_member_of('Progetti_DB_FIL~"''$1''":project:1')" -u -f "%objectname" | xargs -i ccm query "is_member_of('{}')" -t bind -u -f "%objectname"`
+
+  set fnum = `echo $#fname`
+  set i = 0
+
+  echo "Inizio creazione ${CMenv}_BND.LST.TMP"
+
+  while ($i < ${fnum})
+    @ i++
+
+    if (`echo ${fname[$i]} | grep -i ".BND"` != '') then
+
+# **********************************************************************
+# "grep -i" Ignores the case (uppercase or lowercase) of letters when making comparisons.   
+# - commento di Romanini -                                                                  
+# **********************************************************************
+#      echo Add Bind~file ${fname[$i]} to ${CMenv}_BND.LST.TMP                              
+                                                                                            
+# **********************************************************************
+# Con l'istruzione seguente si isola il nome del .bnd presente in fname[$i] e lo si scrive      
+# in una lista di bind temporanea; in particolare la "printf %s" fa permanere il cursore        
+# sulla riga.                                                                                   
+# Questo e' importante perche' l'istruzione dopo isola, nel commento dell'oggetto presente      
+# in fname[$i] (il .bnd), i parametri di BIND e li affianca al nome del .bnd (es. pid.bnd),     
+# isolato con l'istruzione precedente.                                                          
+# Ne risulta una riga della lista di bind fatta cosi :                                          
+# pid.bnd [DbName] DPDDLOC  [DbParm] GRANT PUBLIC ISOLATION CS                                  
+# - commento di Romanini -                                                                      
+# **********************************************************************
+
+      printf "%s " `echo ${fname[$i]} | awk -F"~" '{print ($1)}'` >> ${CCM45_DBlog}/${CMenv}_BND.LST.TMP
+      ccm attr -s comment ${fname[$i]} | awk -F"SWD Completed:" '{print ($1)}' >> ${CCM45_DBlog}/${CMenv}_BND.LST.TMP 
+    endif
+  end
+
+  echo "Fine creazione ${CMenv}_BND.LST.TMP"
+
+
+
+  if ( -d ${SWD_ROOT}/${1}/fit ) then
+
+# **********************************************************************
+# L'istruzione rmdir cancella una directory; riesce a eseguire la   
+# cancellazione solo se la directory e' vuota.                                                 
+# - commento di Romanini -                                                       
+# **********************************************************************
+                                                                                 
+    rmdir ${SWD_ROOT}/${1}/fit
+
+# *******************************************************************************
+# Nella seguente if , se la directory fit non e' vuota, cioe' ci sono
+# files *.fit , per la modifica del fit file (WSOD), viene fatta la "move" 
+# della directory fit e il suo contenuto , sotto la dir. di estrazione per WSOD.
+# Quest'ultima , se non esiste , viene creata.
+# - modifica e commento di Romanini -  
+# *******************************************************************************
+    if !( -d ${SWD_ROOT}/${1}/fit ) then
+      echo "Ho cancellato la directory fit perche' vuota"
+    else
+
+      if !(-d ${SWD_ROOT}/$1_WSOD ) then
+        mkdir ${SWD_ROOT}/$1_WSOD       
+      endif                                 
+      mv  ${SWD_ROOT}/${1}/fit ${SWD_ROOT}/$1_WSOD
+
+    endif
+
+  endif
+
+
+# *******************************************************************************   
+# Controllo se c'e' la dir. "txt" e provo a cancellarla con "rmdir" .               
+# rmdir non funziona se la directory a cui si applica non e' vuota.                 
+# Se non e' vuota , sposto i files ,sotto di essa, direttamente sotto la            
+# directory di estrazione e faccio poi rmdir della dir. "txt"                       
+# ("txt" stavolta e' vuota).                                                        
+# In questo modo rimane la situazione che c'e' sempre stata , cioe' sotto           
+# la directory di estrazione si hanno direttamente i file .txt.                     
+# *******************************************************************************   
+                                                                                    
+  if ( -d ${SWD_ROOT}/${1}/txt ) then                                               
+                                                                                    
+    rmdir ${SWD_ROOT}/${1}/txt                                                      
+                                                                                    
+    if !( -d ${SWD_ROOT}/${1}/txt ) then                                            
+      echo "Ho cancellato la directory txt perche' vuota"                           
+    else                                                                            
+      mv  ${SWD_ROOT}/${1}/txt/* ${SWD_ROOT}/${1}                                     
+      rmdir ${SWD_ROOT}/${1}/txt                                                      
+    endif                                                                           
+                                                                                    
+  endif                                                                             
+
+
+
+#   ********************************************************************
+#   Check Delta to export. Delete Delta-task if no Delta 
+#   ********************************************************************
+
+  ccm set role ccm_admin
+        
+# **********************************************************************
+# Se non e' stata creata la directory di estrazione ( es. /usr/CONT_SRV/SWD_FIL/CSU)      
+# perche' non c'e' nulla da estrarre, allora si cancella il task di estrazione            
+# e si cancella la lista di bind temporanea.                                              
+# - commento di Romanini -                                                                
+# **********************************************************************
+
+
+  if !(-d ${SWD_ROOT}/$1) then
+    ccm del task$Ntask~1:task:probtrac >>&/$CCM45_DBlog/ErrMsg
+    rm ${CCM45_DBlog}/${1}_BND.LST.TMP
+  else
+
+#       ****************************************************************
+#       Start pkzip utility for OS2 environment 
+#       ****************************************************************
+
+    mv ${CCM45_DBlog}/${1}_BND.LST.TMP ${SWD_ROOT}/$1/${1}_BND.LST
+
+
+
+# ***********************************************************************
+#                      SEZIONE AGGIUNTA PER WSOD
+# Nella prima parte viene aggiornata la lista di wsod relativa
+# all'ambiente per cui si sta estraendo.
+# Si procede nel seguente modo:
+# 1) ricerca dei File Delta per wsod eventualmente estratti ed
+#    inserimento degli stessi in un file ordinati alfabeticamente
+# 2) esame singolo di ogni file Delta
+# 3) eliminazione da questa analisi delle righe eventualmente referenti
+#    ad oggetti ghost
+# 4) determinazione per ogni singolo oggetto referenziato in un file
+#    se effettivamente estratto (evito regressioni)
+# 5) verifica se attributo nuovo concorde con il vecchio e modifica
+#    se necessario dello stesso attributo
+#
+# Nella sezione successiva, dove avviene la chiamata alla script cpWSOD_script, 
+# esamino singolarmente gli oggetti estratti e vedo se sono contenuti
+# nella lista di ambiente di wsod.
+# In caso affermativo li copio (per ora, li spostero' poi) in una directory
+# a parte.
+# ***********************************************************************
+
+  cp ${ListaAmbiente} ${ListaAmbiente}.old
+
+# ***********************************************************************
+# La "find" seguente ricerca,nella dir. di estrazione per l'ambiente che si              
+# sta considerando, files con estensione ".wsd"; il risultato della find e' un           
+# elenco di stringhe del tipo: /usr/local//SWD_FIL/CSU/scf27025.wsd.                     
+# Questa  stringa viene passata ad awk con il separatore es. "/CSU/" (-F"/$1/"), e si    
+# considera il secondo campo ('{ print $2 }'); il risultato e' un elenco di stringhe     
+# del tipo: scf27025.wsd.                                                                
+# Si imposta poi il numero delle stringhe, cioe' dei rilasci wsod, nella variabile       
+# Numero_FileDelta.                                                                      
+# - commento di Romanini -                                                               
+# ***********************************************************************
+
+
+  find ${SWD_ROOT}/$1 -name "*.wsd" -type f| awk -F"/$1/" '{ print $2 }' > ${ElencoDeltaWSOD}
+  set Numero_FileDelta = `cat ${ElencoDeltaWSOD} |wc -l`
+  set k = 0
+
+
+# ***********************************************************************
+# Di seguito: 
+#
+# Ciclo per WSOD ....                                                                              
+# Ci sono due cicli :                                                                              
+# Ciclo esterno: scandisce il file:                                                                
+# /usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log/ElencoDeltaWSOD contenente l'elenco dei files          
+# tipo scf27025.wsd, trovati con la "find" precedente.                                             
+# Per ognuno di questi files (/usr/CONT_SRV/SWD_FIL/CSU/scf27025.wsd), se ne legge il contenuto    
+# e si contano gli oggetti in esso elencati.                                                       
+#                                                                                                  
+# Ciclo interno:                                                                                   
+# La prima if ricerca, nel file tipo".wsd" considerato, se c'e una "wild card" per OS2,            
+# cioe' un *. Se c'e' *, quella riga non viene considerata (saltata).                              
+# In realta' le wild card * si possono scrivere nei file .wsd, ma solo in corrispondenza           
+# delle righe ghost.                                                                               
+# Se non c'e' wild card ,allora imposta una variabile (LINE) il cui contenuto e' la riga           
+# su cui siamo posizionati (siamo nel ciclo interno, che scandisce il contenuto di                 
+# un file tipo *.wsd, ad es. /usr/CONT_SRV/SWD_FIL/CSU/scf27025.wsd).                              
+# Controlla che nella riga ci sia la stringa PRI o PUB; se c'e' converte i caratteri "\" in "/"    
+# (set linea = ...ecc.).                                                                           
+# Se (if) nella riga in esame non c'e' la stringa "GHOST" o "ghost", allora isola il nome del file 
+# (es. acfpreut.dat), isola l'attributo (PRI, o PUB), controlla la lunghezza di quest'ultimo.      
+# Da notare che nella lunghezza della stringa viene contato il carattere Ctrl-M, che compare       
+# in coda ad ogni riga del file .wsd.                                                              
+# Quindi l'attributo PRI o PUB non ha lunghezza tre, bensi' quattro.                               
+# Di questo viene tenuto conto per reimpostare la variabile "Attributo" ("if" successiva).         
+# Se (if(`find ${SWD_ROOT}/$1 -name)...ecc.) il nome file (es acfpreut.dat) e' nella dir.          
+# di estrazione (ad es. /usr/local/SWD_FIL/CSU), allora:                                           
+# cerco l'oggetto nella lista d'ambiente per wsod ;                                                
+# se c'e':                                                                                         
+# controllo che l'attributo con cui e' presente in quella lista sia uguale                         
+# all'attributo con cui compare nell'estrazione che si sta esaminando:                             
+# se non e' uguale e l'attributo con cui l'oggetto compare nell'estrazione non e' PUB         
+# , allora viene tolta la riga          
+# corrispondente dalla lista d'ambiente e viene inserita di nuovo col nuovo attributo.  
+# se non c'e':                                                                                
+# aggiungo l'oggetto con il suo attributo nella lista d'ambiente per wsod.                    
+# - commento di Romanini -                                                                    
+# ***********************************************************************
+                                                                                                   
+  while ($k < ${Numero_FileDelta})
+    @ k++
+    set NomeDelta = `head -n $k ${ElencoDeltaWSOD}|tail -n 1`
+    set Progetto = `echo ${NomeDelta} |awk -F. '{ print toupper(substr($1,1,3)) }'`
+    set FileDelta = "${SWD_ROOT}/$1/${NomeDelta}"
+    set NumeroOggetti = `cat ${FileDelta}|wc -l`
+    set i = 0
+    while ($i < ${NumeroOggetti})
+      @ i++
+
+# ***********************************************************************
+# Da notare che il meccanismo per scandire un file riga per riga e' il seguente:              
+# "head -n $i file" ( $i e' la variabile che contiene il numero di riga a cui sono arrivata   
+# nella scansione (siamo in un ciclo); file e' il nome di un file):                           
+# con questa istruzione vengono mostrate le prime $i righe dall'inizio del file;              
+# "|" (pipe, concatena): il risultato della "head..." e' in pratica un file di $i righe;      
+# con il "pipe" questo risultato diventa l'input dell'istruzione successiva ("tail");         
+# "tail -n 1": visualizza l'ultima riga.                                                      
+# Quindi ho un file (risultante dalla "head -n $i file") che, ad ogni iterazione,             
+# aumenta di una riga ed io considero sempre l'ultima.                                        
+# Il risultato di tutto cio' e' una scansione riga per riga.                                  
+# - commento di Romanini -                                                                    
+# ***********************************************************************
+
+      if (`head -n $i ${FileDelta}| tail -n 1|grep "\*" |wc -l` == 0 ) then
+        set LINE = `head -n $i ${FileDelta}| tail -n 1|awk '{ print toupper($0)}'`
+        if (`echo ${LINE} |grep -E "PRI|PUB"|wc -l` != 0 ) then
+          set linea = `head -n $i ${FileDelta}| tail -n 1|awk '{ gsub("\\\\","\/"); print $0 }'`
+          if ((`echo ${linea} |grep "GHOST"|wc -l` == 0)&&(`echo ${linea} |grep "ghost"|wc -l` == 0)&&(`echo ${linea} |grep "#"|wc -l` == 0)) then
+            set oggetto = `echo ${linea} |awk '{ print tolower($1) }'`
+            set nome_file = `echo ${oggetto} |awk -F/ '{ n=split($0,A);print A[n] }'`
+            set Attributo = `echo ${linea} |awk '{ print toupper($2) }'`
+            set LunghezzaAttributo = `echo ${Attributo} |awk '{ print  length($0) }'`
+            if (${LunghezzaAttributo} != 3 ) then
+              set Attributo = `echo ${linea} |awk '{ print toupper(substr($2,1,length($2)-1)) }'`
+            endif
+            if (`find ${SWD_ROOT}/$1 -name "${nome_file}" -type f|grep ${oggetto}|wc -l` != 0) then
+              if (`grep "${oggetto} " ${ListaAmbiente}|wc -l` != 0) then
+                set OldAttributo = `grep "${oggetto} " ${ListaAmbiente}|awk '{ print $2 }'`
+                if (${Attributo} != PUB) then                                      
+                  if (${OldAttributo} != ${Attributo}) then                        
+                    cat ${ListaAmbiente} |grep -v "${oggetto}" > ${ListaAmbTemp}   
+	            echo "${oggetto} :${Progetto}: ${Attributo}" >> ${ListaAmbTemp}
+	            mv ${ListaAmbTemp} ${ListaAmbiente}                            
+		  endif                                                            
+		endif                                                              
+              else
+                if (${Attributo} != PUB) then
+                  echo "${oggetto} :${Progetto}: ${Attributo}" >> ${ListaAmbiente}
+                endif
+              endif
+            endif
+          endif
+        endif
+      endif
+    end
+  end
+
+  echo "Inizio sezione per WSOD"
+
+# ***********************************************************************
+# Esamina tutti i files estratti per vedere se essi sono nella lista d'ambiente per wsod, 
+# e quindi se sono da estrarre per wsod.                                                  
+# - commento di Romanini -                                                                
+# ***********************************************************************
+
+  find ${SWD_ROOT}/$1 -type f|awk -F"$1/" '{ print $2 }'|xargs ${EXE_DIR}/cpWSOD_script ${SWD_ROOT} $1 ${ListaAmbiente}
+  echo "Fine sezione per WSOD"
+
+# Fine parte per WSOD
+
+
+# ***********************************************************************
+# La seguente e' la "label" di "recupero errore zip":                                        
+# si arriva a questa label sia se tutto e' filato liscio, dall'inizio dello script fino qui, 
+# sia se c'e' stata una estrazione che ha avuto problemi nel fare gli zip, pertanto          
+# c'e' il file SWD_UPDATE.ambiente.LOCK (e in esso c'e' una stringa "ERROR:"), e l'utente    
+# che estrae per l'ambiente (csu_sesi ecc.) si e' riassegnato il task per recuperare         
+# l'errore zip.                                                                              
+# - commento di Romanini -                                                                   
+# ***********************************************************************
+
+
+CpkZipErr_Recovery:
+ 
+# ***********************************************************************
+# La if seguente funziona cosi': se il valore contenuto nella variabile e' diverso da zero,      
+# allora la condizione e' vera (then); quindi se CpkZip_Recovery=1 si eseguono le istruzioni     
+# dopo il then. In questo caso se l'estrazione ha problemi sugli zip (e' in questo caso che      
+# viene impostato CpkZip_Recovery a 1),viene cancellato il risolutore del task di estrazione.    
+#  - commento di Romanini -                                                                      
+# ***********************************************************************
+
+    if ($CpkZip_Recovery) then
+      setenv CCM_ADDR `ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}`
+      ccm query -t task -name task${Ntask}
+      ccm attr -m resolver -v " " @1
+    endif
+            
+    ccm stop
+
+
+    ${EXE_DIR}/ccmcpkzip_script ${SWD_ROOT}/$1
+    set cpk_error = ${status}
+
+# ***********************************************************************
+# Secondo quanto detto prima, considerando che il carattere "!" e' la negazione, il      
+# significato della "if" seguente e':                                                    
+# se cpk_error e' zero, cioe' lo script ccmcpkzip_script ha concluso bene, allora (then) 
+# si eseguono le istruzioni dopo il "then":                                              
+#  a) viene impostato CpkzipRes con il contenuto del file response.txt (sotto ad es.     
+#     /usr/CONT_SRV/SWD_FIL/CSU)                                                         
+#  b) viene scritto il file  ad es. DELTA_CSU_BND.LST, sempre sotto ad es.               
+#     /usr/CONT_SRV/SWD_FIL/CSU , contenente l'elenco dei files .bnd, presenti           
+#     nell'estrazione.                                                                   
+# se cpk_error e' diverso da zero viene sempre impostato CpkzipRes                       
+# con il contenuto del file response.txt.                                                
+#  - commento di Romanini -                                                              
+# ***********************************************************************
+                                                                                         
+    if !(${cpk_error}) then
+      set CpkzipRes = "`head -n 50 ${SWD_ROOT}/$1/response.txt`"
+      find ${SWD_ROOT}/$1 -name "*.bnd" -o -name "*.BND" -type f | awk -F"bind/" '{print ($2)}' > ${SWD_ROOT}/$1/DELTA_${1}_BND.LST
+    else
+      set CpkzipRes = "`head -n 9  ${SWD_ROOT}/$1/response.txt`"
+    endif
+    setenv CCM_ADDR `ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}`
+
+# ***********************************************************************
+# Viene creato il "task-log" (task_description) del task di estrazione, con il contenuto  
+# di CpkzipRes impostato nella "if" precedente.                                           
+#  - commento di Romanini -                                                               
+# ***********************************************************************
+
+    ccm query -t task -name task${Ntask}
+    ccm attr -c task_description -t string -v "${CpkzipRes}" @1
+    if (${status}) then
+      ccm attr -m task_description -v "${CpkzipRes}" @1
+    endif
+ 
+                                                                                
+# ***********************************************************************
+# La if seguente dice che, se il rc dello script ccmcpkzip_script e' 0 (OK),    
+# allora:                                                                       
+#  a) imposto la variabile synps con la "synopsis" del task di estrazione       
+#  b) se questa "synopsis" contiene il carattere "~" allora costruisce la       
+#     synopsis con cio che trova a destra del carattere "~", e imposta gli      
+#     attributi "status" e "cod_opzione" del task.                              
+#  - commento di Romanini -                                                     
+# ***********************************************************************
+
+    if !(${cpk_error}) then
+
+# ***********************************************************************
+# la query seguente ha il formato "%task_synopsis", cioe' restituisce il    
+# synopsis del task specificato (in questo caso quello di estrazione);      
+# l'opzione "-u" elimina il numero d'ordine della query                     
+# (cioe' quello che viene poi referenziato con la @).                       
+# - commento di Romanini -                                                  
+# ***********************************************************************
+
+      set synps = `ccm query -t task -n task${Ntask} -u -f "%task_synopsis"`
+
+# ***********************************************************************
+# "grep -c" esegue il conteggio delle linee che soddisfano la condizione.     
+# - commento di Romanini -                                                    
+# ***********************************************************************
+                                                                              
+      if (`echo ${synps} | grep -c "~"`) then
+        set synps = `echo ${synps} | awk -F"~" '{print ($2)}'`
+        ccm attr -m task_synopsis -v "${synps}" @1
+        set errsynps = `echo ${synps} | awk -F"~" '{print ($1)}'`
+
+#                *******************************************************
+#                Warning... cod_opzione MUST be NULL-Action for triggers 
+#                *******************************************************
+
+        ccm attr -m cod_opzione -v "Recovering" @1
+        ccm attr -m status -v "task_assigned" @1
+        ccm attr -m cod_opzione -v "$4" @1
+      endif
+
+#           ************************************************************
+#           If PRD&bind then create cp_db2 task            
+#           ************************************************************
+
+# ***********************************************************************
+# Qui crea rispettivamente i task di sw_sesi e di cp_db2 (quest'ultimo solo per ambiente PRD).  
+# Dopo la creazione del task "Distrib.SoftWare ecc." (swd_sesi), copia nel file                 
+# UpFldSWD.num-task-swd_sesi.ambiente, il file SUBSYS_RELATE.ambiente, contenente               
+# la lista dei task ghost, oggetto di estrazione.                                               
+# Da notare che l'attributo jolly di entrambi i task di cp_db2 e di swd_sesi,                   
+# impostato piu' sotto, e' il numero dei task ghost delle consegne estratte , cioe' l'attributo 
+# jolly ha un contenuto del tipo:  "6237-HDI20010 6236-CAS23028".                               
+# - commento di Romanini -                                                                      
+# ***********************************************************************
+                                                                                                
+      set ds_synps = `printf "%s  %s " "Distrib.SoftWare" ${synps}`
+      set regtsk = `ccm create_task -s "${ds_synps}" -platform AIX-DB_FIL -release Any -subsystem Any | awk '{print ($2)}'`
+      cp ${CCM45_DBlog}/SUBSYS_RELATE.${CMenv} ${CCM45_DBlog}/UpFldSWD.task${regtsk}.${CMenv}
+
+      if (($1 == PRD) && ((`grep -c -E ".LST|.lst" ${SWD_ROOT}/$1/response.txt`) || (`grep -c -E "DB2|db2" ${SWD_ROOT}/$1/response.txt`))) then
+        set cp_synps = `printf "%s  %s " "Anticipi DOC" ${synps}`
+        set cp_tsk = `ccm create_task -s "${cp_synps}" -r cp_db2 -platform AIX-DB_FIL -release Any -subsystem Any | awk '{print ($2)}'`
+        ccm query -t task -name task${cp_tsk}
+        ccm attr -c comitver -t string -v ${CMenv} @1
+        set rilascio = "`cat ${SWD_ROOT}/$1/response.txt | grep "Rilascio:"`"
+        ccm attr -c task_description -t string -v "${rilascio}" @1
+        ccm attr -c jolly -t string -v "${CCM45_DBlog}/UpFldSWD.task${regtsk}.${CMenv}" @1
+      endif
+
+      ccm query -t task -name task${regtsk}
+      ccm attr -c task_description -t string -v "${CpkzipRes}" @1
+      ccm attr -c cod_opzione -t string -v "Distrib.SoftWare" @1
+      ccm attr -c resolver -t string -v swd_sesi @1
+      ccm attr -c comitver -t string -v ${CMenv} @1
+      ccm attr -c jolly -t string -v "${CCM45_DBlog}/UpFldSWD.task${regtsk}.${CMenv}" @1
+            
+#           ************************************************************
+#           Set child's Task-Number into Delta-task   
+#           ************************************************************
+
+      ccm query -t task -name task${Ntask}
+
+# ***********************************************************************
+# Da notare che l'attributo jolly del task di estrazione (task referenziato con @1, definito   
+# dalla "query" precedente), che viene qui sotto impostato, e' il numero del task di swd_sesi, 
+# cioe' l'attributo jolly per il task di estrazione ha un contenuto del tipo:  2933.           
+# - commento di Romanini -                                                                     
+# ***********************************************************************
+
+      ccm attr -c jolly -t string -v "task${regtsk}" @1
+
+      if (${status}) then
+        ccm attr -m jolly -v "task${regtsk}" @1
+      endif
+      ccm attr -m release -v "Any" @1
+      ccm attr -m resolver -v ${cmenv}_sesi @1
+      ccm query -t task -name task${Ntask}
+
+    else
+
+# ***********************************************************************
+# Se lo script di John ha dato rc diverso da zero, allora:                                   
+# se gia' c'e' stato un errore zip, cioe' CpkZip_Recovery e' diverso da zero, e si e'        
+# cercato di recuperare l'errore, allora la synopsis del task di estrazione viene impostata  
+# in questo modo: "Zip Error: codice-di-errore + synopsis precedente";                       
+# altrimenti la synopsis del task di estrazione viene impostata in questo modo:              
+# "Zip Error: codice-di-errore. L'utente ecc. deve riassegnare il task per continuare +      
+# synopsis precedente".                                                                      
+# Dopo di che:                                                                               
+# a) lo status del task viene impostato a "registered",                                      
+# b) l'attributo "release" del task di estrazione viene impostato a "Estraz.Recovery" 
+# c) il risolutore viene impostato a "${ambiente}_sesi",                                                     
+# d) viene scritto nel file SWD_UPDATE.ambiente.LOCK il seguente messaggio:                  
+#    "ERROR: Cpkzip codice-di-errore, ~Numero-task-di estrazione"                            
+# e) viene dato il messaggio all'utente:"Warning: Controllare il campo commento del task..   
+# - commento di Romanini -                                                                   
+# ***********************************************************************
+#           ************************************************************
+#           ERROR ccmcpkzip_script: Set registered state for Delta-task   
+#           ************************************************************
+
+      if (${CpkZip_Recovery}) then
+        set synps = `ccm query -t task -n task${Ntask} -u -f "Zip Error: ${cpk_error}. %task_synopsis"`
+      else
+        set synps = `ccm query -t task -n task${Ntask} -u -f "Zip Error: ${cpk_error}. L'utente ${CMenv}_sesi deve riassegnare il task per continuare ~%task_synopsis"`
+      endif
+      ccm attr -m task_synopsis -v "${synps}" @1
+      ccm attr -m status -v registered @1
+      ccm attr -m release -v "Estraz.Recovery" @1
+      echo "ERROR: Cpkzip ${cpk_error}, ~${Ntask}" > ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK
+      echo "Warning: Controllare il campo commento del task ${Ntask}" >>&/$CCM45_DBlog/ErrMsg 
+      ccm attr -m resolver -v ${cmenv}_sesi @1
+    endif
+ 
+  endif
+
+  ccm stop
+
+# ***********************************************************************
+# Se tutto e' andato bene, si cancellano i files:                                             
+# SWD_UPDATE.ambiente.LOCK,che contiene l'elenco dei progetti che hanno una o piu'            
+#                           consegne estratte                                                 
+# SUBSYS_RELATE.ambiente,che contiene la lista dei task ghost estratti. Da ricordare          
+# che la lista definitiva e' la UpFldSWD.tasknnnn.ambiente.                                   
+# - commento di Romanini -                                                                    
+# ***********************************************************************
+
+  if !(${cpk_error}) then
+    rm ${CCM45_DBlog}/SWD_UPDATE.${CMenv}.LOCK
+    rm ${CCM45_DBlog}/SUBSYS_RELATE.${CMenv}
+  endif
+
+endif
+

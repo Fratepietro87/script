@@ -1,0 +1,120 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                       CheckForDelete 
+#*
+#* Goal: Controllare nel caso di cancellazione di consegna quali siano 
+#*       le consegne che hanno quello da concellare come corequisito.
+#*
+#* Parameters: $1 cod_opzione
+#*             $2 task_subsys
+#*             $3 comitver
+#*             $4 task_number
+#*             $5 Task_synopsis
+#*             $6 creator
+#*             $7 resolver
+#*
+#* Author: Luca Brizzolara 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# OjbSize Calculation for objsize attrib.
+# **********************************************************************
+
+set CCM45_DB    = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+
+# **********************************************************************
+# Controllo il codice opzione
+# **********************************************************************
+
+if ($1 != "Delete.Consegna" ) then
+  exit 0
+endif
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set REL = $2$3
+set rel = `echo ${REL} |awk '{ print tolower($1) }'`
+set ListaPrerequisiti = "${CCM45_DBlog}/Prereq.lst"
+
+# **********************************************************************
+# Controlli preventivi
+# **********************************************************************
+
+# **********************************************************************
+# Controllo che la consegna sia stata migrata
+# **********************************************************************
+
+if !(-f ${CCM45_DBlog}/Delta.${REL}) then
+  echo "MSG:Consegna ${REL} non e' stata migrata ..."
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+# **********************************************************************
+# Controllo che la consegna non sia gia' stata promossa in altri ambienti
+# **********************************************************************
+
+if (`cat ${CCM45_DBlog}/Delta.${REL}|grep FOLDER_UPDATE|wc -l` > 0) then
+  echo "MSG:La consegna e' gia' stata promossa in ambienti successivi."
+  echo "MSG:  "
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+goto good_tsk
+
+bad_task:
+
+cat > ${CCM45_DBlog}/tsk$4 <<!
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+ccm del task$4~1:task:probtrac
+ccm stop
+rm ${CCM45_DBlog}/tsk$4 &
+!
+source ${CCM45_DBlog}/tsk$4 &
+exit 0
+
+good_tsk:
+
+
+grep PREREQUISIT ${CCM45_DBlog}/Delta.???????? |grep ${REL} |grep -v Delta.${REL}|awk -F: '{ print $1 }' |awk -F. '{ print $2 }' > ${ListaPrerequisiti}
+grep PREREQUISIT ${CCM45_DBlog}/Delta.???????? |grep $rel |grep -v Delta.${REL}|awk -F: '{ print $1 }' |awk -F. '{ print $2 }' >> ${ListaPrerequisiti}
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}`
+
+set synps = `ccm query -t task -n task$4 -u -f "%task_synopsis"`
+set synps = `printf "%s  %s " "$2$3~DEL" ${synps}`
+ccm attr -m task_synopsis -v "${synps}" @1
+
+ccm query -t task -n task$4
+if (`cat ${ListaPrerequisiti} |wc -l` != 0 ) then
+  set fname = `cat ${ListaPrerequisiti} | awk -F' ' '{ n=split($0,A); for (x in A) print A[x]}'`
+  echo "MSG:La consegna $2$3 e' prerequisito delle seguenti consegne:"
+  echo "MSG: ${fname}"
+  ccm attr -c task_description -t string -v "$2$3 e' prerequisito di ${fname}" @1
+  if (${status}) then
+    echo "fase di errore"
+    ccm attr -m task_description -v "$2$3 e' prerequisito di ${fname}" @1
+  endif
+else
+  echo "MSG:La consegna $2$3 non e' prerequisito di alcuna consegna"
+  ccm attr -c task_description -t string -v "$2$3 non e' prerequisito di alcuna consegna" @1
+  if (${status}) then
+    ccm attr -m task_description -v "$2$3 non e' prerequisito di alcuna consegna" @1
+  endif
+endif
+if (`ccm query "cvtype='task' and task_subsys='$2' and comitver='$3' and status='task_assigned'" |wc -l` == 0 ) then
+  echo "MSG: Attenzione!!! Tutti i task della consegna sono completati. Se non e' bloccata da"
+  echo "MSG: prerequisiti o corequisiti, ${REL} verra' estratta alla prossima estrazione"
+endif
+ccm stop
+exit 0
+

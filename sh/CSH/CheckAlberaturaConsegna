@@ -1,0 +1,329 @@
+#!/bin/csh 
+#***********************************************************************
+#*                       CheckAlberaturaConsegna
+#* 
+#* Goal: Controllare che la consegna abbia un'alberatura corretta
+#*       I codici di ritorno sono: 
+#*       0 - tutto ok
+#*       1 - se una variabile non e' definita in tabella.
+#*       2 - consegna non conforme alla struttura prevista (in questo
+#*           caso in TEMP_FILE restituisce il file ho directory che 
+#*           una albertura non corretta).
+#*       ATTENZIONE: esco al primo errore riscontrato.
+#*
+#* Parametri passati:$1 MIG_ROOT (dove e' situata la consegna)
+#*                   $2 TEMP_FILE (dove mettere l'aberatura errata)
+#*                   $3 Nome del progetto
+#*                   $4 Numero della consegna
+#*                   $5 PROJECT_DIR
+#*                   $6 nome della tabella
+#* 
+#* Autore: Luca Brizzolara, Luciano Giovannini - Feb 2000
+#* 
+#***********************************************************************
+
+set MIG_ROOT = $1
+set TEMP_FILE = $2
+set PROGETTO = $3 
+set COMITVER = $4
+set PROJECT_DIR = $5
+set TAB_NAME = $6
+set TABELLA = "${PROJECT_DIR}/${TAB_NAME}"
+
+#***********************************************************************
+# Controllo che siano definite tutte le variabile nella tabella
+#***********************************************************************
+if (`cat ${TABELLA} |grep CLIENT_DELIMITERS|wc -l` != 0) then
+  set CLIENT_DELIMITERS = `cat ${TABELLA} |grep CLIENT_DELIMITERS |awk -F= '{ print $2 }'`
+else
+  echo CLIENT_DELIMITERS > ${TEMP_FILE}
+  exit 1
+endif
+
+if (`cat ${TABELLA} |grep SERVER_DELIMITERS|wc -l` != 0) then
+  set SERVER_DELIMITERS = `cat ${TABELLA} |grep SERVER_DELIMITERS |awk -F= '{ print $2 }'`
+else
+  echo SERVER_DELIMITERS > ${TEMP_FILE}
+  exit 1
+endif
+
+if (`cat ${TABELLA} |grep EXEMPT_DELIMITERS|wc -l` != 0) then
+  set EXEMPT_DELIMITERS = `cat ${TABELLA} |grep EXEMPT_DELIMITERS |awk -F= '{ print $2 }'`
+else
+  echo EXEMPT_DELIMITERS > ${TEMP_FILE}
+  exit 1
+endif
+
+if (`cat ${TABELLA} |grep SQL_DELIMITERS|wc -l` != 0) then
+  set SQL_DELIMITERS = `cat ${TABELLA} |grep SQL_DELIMITERS |awk -F= '{ print $2 }'`
+else
+  echo SQL_DELIMITERS > ${TEMP_FILE}
+  exit 1
+endif
+
+if (`cat ${TABELLA} |grep BIND_DELIMITERS|wc -l` != 0) then
+  set BIND_DELIMITERS = `cat ${TABELLA} |grep BIND_DELIMITERS |awk -F= '{ print $2 }'`
+else
+  echo BIND_DELIMITERS > ${TEMP_FILE}
+  exit 1
+endif
+
+if (`cat ${TABELLA} |grep SEPARATE_PROJECTS|wc -l` != 0) then
+  set SEPARATE_PROJECTS = `cat ${TABELLA} |grep SEPARATE_PROJECTS |awk -F= '{ print $2 }'`
+else
+  echo SEPARATE_PROJECTS > ${TEMP_FILE}
+  exit 1
+endif
+
+#***********************************************************************
+# Nel caso di FID e PCT ho un'alberatura leggermente differente.
+#***********************************************************************
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+if (`echo ",${SEPARATE_PROJECTS},"| grep ",${progetto}," |wc -l` != 0) then
+  set SEPARATE_DIR_BASE = "${MIG_ROOT}/${PROGETTO}${COMITVER}"
+  set SEPARATE_LIST = `ls ${SEPARATE_DIR_BASE}`
+  foreach SEPARATE_ELEMENT (${SEPARATE_LIST})
+#***********************************************************************
+#  Se ho una directory, la esamino. Non ho specifiche sui file.
+#***********************************************************************
+    if (-d ${SEPARATE_DIR_BASE}/${SEPARATE_ELEMENT} ) then
+      if (${SEPARATE_ELEMENT} != ${progetto} ) then
+        echo ${PROGETTO}${COMITVER}/${SEPARATE_ELEMENT} > ${TEMP_FILE}
+        exit 2
+      endif
+    endif
+  end
+#***********************************************************************
+# Nel caso di PCT e FID esamino la consegno partendo da ../CONSEGNA/fid (o pct)
+#***********************************************************************
+  set DIRIN = "${MIG_ROOT}/${PROGETTO}${COMITVER}/${progetto}"
+else
+  set DIRIN = ${MIG_ROOT}/${PROGETTO}${COMITVER}
+endif
+
+
+
+#***********************************************************************
+# Controllo dell'alberatura.
+#***********************************************************************
+set DIRLIST = `ls ${DIRIN}`
+foreach DIR (${DIRLIST})
+  set FOUND = 1
+#***********************************************************************
+#  Se ho una directory, la esamino. Non ho specifiche sui file.
+#***********************************************************************
+  if ( -d ${DIRIN}/${DIR} ) then
+    if (`echo ",${SERVER_DELIMITERS},"| grep ",${DIR}," |wc -l` != 0) then
+#***********************************************************************
+#   La directory si chiama server o SERVER
+#***********************************************************************
+      set FOUND = 0
+      set SERVER_DIR = ${DIRIN}"/"${DIR}
+      set SDRIVES = `ls ${SERVER_DIR}`
+      foreach DRIVE (${SDRIVES})
+        if ( -d ${SERVER_DIR}/${DRIVE} ) then
+          set len = `echo ${DRIVE} | awk '{print length($0)}'`
+          if ( ${len} != 1 ) then
+#***********************************************************************
+# Controllo che le sottodirectory siano di una lettera
+#***********************************************************************
+            set DIR_ERRATA = `echo ${SERVER_DIR}/${DRIVE} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+            echo ${DIR_ERRATA} > ${TEMP_FILE}
+            exit 2
+          else
+            set drive = `echo ${DRIVE} | awk '{print tolower($1)}'`
+            if ((${drive} != c)&&(${drive} != e)) then
+              set DIR_ERRATA = `echo ${SERVER_DIR}/${DRIVE} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+              echo ${DIR_ERRATA} > ${TEMP_FILE}
+              exit 2
+#***********************************************************************
+# Controllo che le sottodirectory sia o "c" o "e"
+#***********************************************************************
+            endif
+          endif
+        else
+          set DIR_ERRATA = `echo ${SERVER_DIR}/${DRIVE} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+          echo ${DIR_ERRATA} > ${TEMP_FILE}
+          exit 2
+        endif
+      end
+    endif
+#***********************************************************************
+# Controllo se la directory si chiama "c" o "C"
+#***********************************************************************
+    if (`echo ",${CLIENT_DELIMITERS},"| grep ",${DIR}," |wc -l` != 0) then
+      set FOUND = 0
+    endif
+#***********************************************************************
+#  Controllo se la directory e' di tipo bind.
+#***********************************************************************
+    if (`echo ",${BIND_DELIMITERS},"| grep ",${DIR}," |wc -l` != 0) then
+#***********************************************************************
+# La directory e' di tipo bind; in tale caso devo avere la seguente
+# struttura:bnd\server\instdb\d\bind contenente file di estensione
+# bnd. Tutta la parte che segue controlla questa specifica.
+#***********************************************************************
+      set FOUND = 0
+      set BND_DIR = ${DIRIN}"/"${DIR}
+      set BSERVER = `ls ${BND_DIR}`
+      foreach SERVER (${BSERVER})
+        if ( -d ${BND_DIR}/${SERVER} ) then
+          if (`echo ",${SERVER_DELIMITERS},"| grep ",${SERVER}," |wc -l` != 0) then
+            set BSERVER_DIR = ${BND_DIR}"/"${SERVER} 
+            set BDRIVES = `ls ${BSERVER_DIR}`
+            foreach BND_DRIVES (${BDRIVES})
+              if ( -d ${BSERVER_DIR}/${BND_DRIVES}) then
+                set bdrive = `echo ${BND_DRIVES} | awk '{print tolower($1)}'`
+                if (${bdrive} != d) then
+                  set DIR_ERRATA = `echo ${BSERVER_DIR}/${BND_DRIVES} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                  echo ${DIR_ERRATA} > ${TEMP_FILE}
+                  exit 2
+                else
+                  set BSUBDIR = ${BSERVER_DIR}"/"${BND_DRIVES}
+                  set EL_BSUBDIR = `ls ${BSUBDIR}`
+                  foreach SUBDIR (${EL_BSUBDIR})
+                    if ( -d ${BSUBDIR}/${SUBDIR} ) then
+                      set bsubdir = `echo ${SUBDIR} | awk '{print tolower($1)}'`
+                      if (${bsubdir} != instdb) then
+                        set DIR_ERRATA = `echo ${BSUBDIR}/${SUBDIR} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                        echo ${DIR_ERRATA} > ${TEMP_FILE}
+                        exit 2
+                      else
+                        set NEXT_DIR = ${BSUBDIR}"/"${SUBDIR}  
+                        set EL_NEXT_DIR = `ls ${NEXT_DIR}`
+                        foreach LAST_DIR (${EL_NEXT_DIR})
+                          if ( -d ${NEXT_DIR}/${LAST_DIR} ) then
+                            set last_dir = `echo ${LAST_DIR} | awk '{print tolower($1)}'`
+                            if (${last_dir} != bind) then
+                              set DIR_ERRATA = `echo ${NEXT_DIR}/${LAST_DIR} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                              echo ${DIR_ERRATA} > ${TEMP_FILE}
+                              exit 2
+                            else
+                              set DIR_BASE = ${NEXT_DIR}"/"${LAST_DIR}
+                              set ELENCO_FILE = `ls ${DIR_BASE}`
+                              foreach FILE_BND (${ELENCO_FILE})
+                                if ( -f ${DIR_BASE}/${FILE_BND} ) then
+                                  set estensione = `echo ${FILE_BND} | awk -F. '{ print toupper($2) }'`
+                                  if (${estensione} != BND) then
+                                    set DIR_ERRATA = `echo ${DIR_BASE}/${FILE_BND} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                                    echo ${DIR_ERRATA} > ${TEMP_FILE}
+                                    exit 2
+                                  endif
+                                else
+                                  set DIR_ERRATA = `echo ${DIR_BASE}/${FILE_BND} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                                  echo ${DIR_ERRATA} > ${TEMP_FILE}
+                                  exit 2
+                                endif
+                              end
+                            endif
+                          else
+                            set DIR_ERRATA = `echo ${NEXT_DIR}/${LAST_DIR} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                            echo ${DIR_ERRATA} > ${TEMP_FILE}
+                            exit 2
+                          endif
+                        end
+                      endif
+                    else
+                      set DIR_ERRATA = `echo ${BSUBDIR}/${SUBDIR} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                      echo ${DIR_ERRATA} > ${TEMP_FILE}
+                      exit 2
+                    endif
+                  end
+                endif
+              else
+                set DIR_ERRATA = `echo ${BSERVER_DIR}/${BND_DRIVES} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                echo ${DIR_ERRATA} > ${TEMP_FILE}
+                exit 2
+              endif
+            end
+          else
+            set DIR_ERRATA = `echo ${BND_DIR}/${SERVER} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+            echo ${DIR_ERRATA} > ${TEMP_FILE}
+            exit 2
+          endif
+        else
+          set DIR_ERRATA = `echo ${BND_DIR}/${SERVER} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+          echo ${DIR_ERRATA} > ${TEMP_FILE}
+          exit 2
+        endif
+      end
+    endif
+#***********************************************************************
+# Controllo se la directory e' di tipo cmd o db2.
+#***********************************************************************
+    if (`echo ",${EXEMPT_DELIMITERS},"| grep ",${DIR}," |wc -l` != 0) then
+      if (${DIR} != c ) then
+        set FOUND = 0
+        if ( ${DIR} == cmd ) then
+#***********************************************************************
+# Se di tipo cmd deve contenere solo file con estensione cmd.
+#***********************************************************************
+          set CMD_DIR = ${DIRIN}"/"${DIR}
+          set LISTA_CMD = `ls ${CMD_DIR}`
+          foreach file_cmd (${LISTA_CMD})
+            if ( -f ${CMD_DIR}/${file_cmd} ) then
+              set estensione = `echo ${file_cmd} | awk -F. '{ print $2 }'`
+              if (${estensione} != cmd) then
+                set DIR_ERRATA = `echo ${CMD_DIR}/${file_cmd} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                echo ${DIR_ERRATA} > ${TEMP_FILE}
+                exit 2
+              endif
+            else
+              set DIR_ERRATA = `echo ${CMD_DIR}/${file_cmd} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+              echo ${DIR_ERRATA} > ${TEMP_FILE}
+              exit 2
+            endif
+          end
+        else
+#***********************************************************************
+# Se di tipo db2 deve contenere solo file con estensione sql.
+#***********************************************************************
+          set DB2_DIR = ${DIRIN}"/"${DIR}
+          set LISTA_DB2 = `ls ${DB2_DIR}`
+          foreach file_db2 (${LISTA_DB2})
+            if ( -f ${DB2_DIR}/${file_db2} ) then
+              set estensione = `echo ${file_db2} | awk -F. '{ print $2 }'`
+	      set file_name = `echo ${file_db2} | awk -F. '{ print $1 }'`
+              if (${estensione} != sql) then
+                set DIR_ERRATA = `echo ${DB2_DIR}/${file_db2} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                echo ${DIR_ERRATA} > ${TEMP_FILE}
+                exit 2
+              endif
+	      if (`echo ",${SQL_DELIMITERS}," |grep ",${file_name}," |wc -l` == 0) then
+                set DIR_ERRATA = `echo ${DB2_DIR}/${file_db2} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+                echo ${DIR_ERRATA} > ${TEMP_FILE}
+                exit 2
+              endif
+            else
+              set DIR_ERRATA = `echo ${DB2_DIR}/${file_db2} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+              echo ${DIR_ERRATA} > ${TEMP_FILE}
+              exit 2
+            endif
+          end
+        endif
+      endif
+    endif
+#***********************************************************************
+# Se la directory che stavo esaminando non viene trovata ho una condizione
+# di errore.
+#***********************************************************************
+    if (${FOUND} != 0 ) then
+      set DIR_ERRATA = `echo ${DIRIN}/${DIR} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+      echo ${DIR_ERRATA} > ${TEMP_FILE}
+      exit 2
+    endif
+  else
+#***********************************************************************
+# Se si tratta di un file e la consegna e' PCT o FID allora ho una 
+# condizione di errore perche' i file per tali consegne sono esaminati
+# nella parte iniziale di questa script.
+#***********************************************************************
+    if (`echo ",${SEPARATE_PROJECTS},"| grep ",${progetto}," |wc -l` != 0) then
+      set DIR_ERRATA = `echo ${DIRIN}/${DIR} |awk -F"${MIG_ROOT}/" '{ print $2 }'`
+      echo ${DIR_ERRATA} > ${TEMP_FILE}
+      exit 2
+    endif
+  endif
+end
+
+exit 0

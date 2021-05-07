@@ -1,0 +1,40 @@
+#!/bin/csh
+#***********************************************************************
+#*		CheckNumMigrazioni
+#* 
+#* Goal: Controllare che non ci siano troppe migrazioni in corso (limito
+#*       a 3 il numero di migrazioni contemporanee per ragioni di
+#*       prestazioni). Controllo inoltre che il progetto in questione
+#*       non sia gia' in corso un'altra migrazione. Restituisce:
+#*       0 - se tutto ok
+#*       1 - se ci sono troppe migrazioni in corso
+#*       2 - se c'e' gia' una migrazione in corso per $2
+#* 
+#* Parametri passati:$1 LOG_DIR (dove ci sono i file Delta.Consegna)
+#*                   $2 Nome del progetto
+#* 
+#* Autore: Luca Brizzolara Feb 2000 
+#* 
+#***********************************************************************
+set LOG_DIR = $1
+set PROGETTO = $2
+
+# ************************************************************
+# Controllo che non ci siano gia' in corso tre migrazioni
+# ************************************************************
+if (`ls ${LOG_DIR}/Mig.*.LOCK | grep -c LOCK` > 2) then
+  exit 1
+endif
+
+# ************************************************************
+# Controllo che non sia gia' in corso una migrazione di $2
+# ************************************************************
+
+if (-f ${LOG_DIR}/Mig.${PROGETTO}.LOCK) then
+  exit 2
+endif
+
+# ************************************************************
+# I controlli hanno avuto esito positivo.
+# ************************************************************
+exit 0

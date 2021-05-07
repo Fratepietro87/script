@@ -1,0 +1,87 @@
+#!/bin/csh
+############################################################
+#
+#                  ModificaIdent
+#
+# Goal: Modificare l'ident nei sorgenti
+#
+# Parameters: $1 name
+#             $2 version
+#             $3 owner
+#             $4 type
+#             $5 istance
+#             $6 project
+#
+# Author: Luca Brizzolara, Giuseppe Palazzetti, Jen 2001
+#
+############################################################
+
+#*****************************************************
+# Definizione delle variabili
+#*****************************************************
+set CCM51_DB = "/tst1/ccm_databases/SELESTA"
+set SCRIPT_PATH = "${CCM51_DB}/lib/notify/Unix"
+set LOCAL_CNF_PATH = "${CCM51_DB}/lib/notify/cnf"
+set REMOTE_SCRIPT_PATH = "/develop/ccm_root/TRIGGER_SCRIPT/SELESTA"
+set REMOTE_CNF_PATH = "${REMOTE_SCRIPT_PATH}/cnf"
+set OBJECT_NAME = $1
+set OBJ_VERSION = $2
+set OBJ_OWNER = $3
+set TYPE = $4
+set ISTANCE = $5
+set PROJECT_NAME = $6
+
+#*****************************************************
+# Verifico se il progetto necessita dell'ident
+#*****************************************************
+if (-f ${LOCAL_CNF_PATH}/ListaProj_ident) then
+  if (`grep ":${PROJECT_NAME}:" ${LOCAL_CNF_PATH}/ListaProj_ident |wc -l` == 0 ) then
+    exit 0
+  endif
+else
+  if (`grep ":${PROJECT_NAME}:" ${REMOTE_CNF_PATH}/ListaProj_ident |wc -l` == 0 ) then
+    exit 0
+  endif
+endif
+
+#*****************************************************
+# Setto il nome del file temporaneo
+#*****************************************************
+set NOME_FILE = "${HOME}/${OBJECT_NAME}.${OBJ_VERSION}.tmp"
+if (-f ${SCRIPT_PATH}/LeggiPath_script) then
+  ${SCRIPT_PATH}/LeggiPath_script ${PROJECT_NAME} ${OBJECT_NAME} ${OBJ_VERSION} ${OBJ_OWNER} ${CCM51_DB} ${TYPE} ${ISTANCE} ${NOME_FILE}
+  set ESITO = ${status}
+  if (${ESITO} ) then
+    echo "MSG: Errore nella procedura dell'ident per oggetto ${OBJECT_NAME}"
+    echo "MSG:Contattare l'ufficio del Change"
+    exit 1
+  endif
+else
+  ${REMOTE_SCRIPT_PATH}/LeggiPath_script ${PROJECT_NAME} ${OBJECT_NAME} ${OBJ_VERSION} ${OBJ_OWNER} ${CCM51_DB} ${TYPE} ${ISTANCE} ${NOME_FILE}
+  set ESITO = ${status}
+  if (${ESITO} ) then
+    echo "MSG: Errore nella procedura dell'ident per oggetto ${OBJECT_NAME}"
+    echo "MSG:Contattare l'ufficio del Change"
+    exit 1
+  endif
+endif
+set FILE_PATH = `cat ${NOME_FILE}`
+rm -f ${NOME_FILE}
+
+#*****************************************************
+# Lancio la script che va a modificarmi l'ident 
+# del file $OBJECT_NAME in versione $OBJ_VERSION
+#*****************************************************
+if (-f ${SCRIPT_PATH}/InsertNewIdent_script ) then
+  ${SCRIPT_PATH}/InsertNewIdent_script ${FILE_PATH} ${OBJECT_NAME} ${OBJ_VERSION} ${TYPE} ${OBJ_OWNER} ${SCRIPT_PATH} ${NOME_FILE}
+  set ESITO = ${status}
+else
+  ${REMOTE_SCRIPT_PATH}/InsertNewIdent_script ${FILE_PATH} ${OBJECT_NAME} ${OBJ_VERSION} ${TYPE} ${OBJ_OWNER} ${REMOTE_SCRIPT_PATH} ${NOME_FILE}
+  set ESITO = ${status}
+endif
+if (${ESITO} != 0 ) then
+  echo "MSG:Inserimento ident per ${OBJECT_NAME} fallita"
+  exit 1
+endif
+exit 0
+

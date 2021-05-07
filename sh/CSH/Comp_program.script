@@ -1,0 +1,50 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    Comp_program.script
+#*
+#* Goal: Compilazione programmi DataSim
+#*
+#* Parameters: $1 progetto 
+#*             $2 comitver 
+#*
+#* Author: Luca Brizzolara Dec 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Setto variabili di ambiente
+# **********************************************************************
+
+set WA_PATH = "/usr/CONT_SRV/dvp_dts/ccm_wa/DB_GPM"
+set SCRIPT_REMOTE_DIR = "/u/dsim/CM45_DIR/SCRIPT"
+set TEMP_DIR = "/u/dsim/CM45_DIR/SVILUPPO"
+
+# **********************************************************************
+# Controllo presenza file da compilare
+# **********************************************************************
+
+shift
+shift
+
+while ($#argv != 0)
+  echo $1
+  set NomeConPath = `find ${WA_PATH} -name "$1"`
+  if (`echo $1 |awk -F. '{ print $2 }'` == "inp") then
+    remsh c-gpm1-c -l dsim -n "rcp c-gpm2-c:${NomeConPath} ${TEMP_DIR}/form"
+  else
+    if (`cat ${NomeConPath}|grep main|wc -l` == 0) then
+      remsh c-gpm1-c -l dsim -n "rcp c-gpm2-c:${NomeConPath} ${TEMP_DIR}/routine"
+    else
+      remsh c-gpm1-c -l dsim -n "rcp c-gpm2-c:${NomeConPath} ${TEMP_DIR}/program"
+    endif
+  endif
+  shift
+end
+remsh c-gpm1-c  -l dsim -n "${SCRIPT_REMOTE_DIR}/Compila_programmi.ksh $1 $2"
+set Errore = ${status}
+if (${Errore}) then
+  exit 1
+else
+  exit 0
+endif

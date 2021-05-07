@@ -1,0 +1,88 @@
+#!/bin/csh
+
+#*********************************************************************************
+#				CloseMigHps_script
+#
+#
+# 	Verifica la corretta sequenza di checkin dei task informativi HPS
+#	da parte dell'utente "chk_sa"?? e da parte di cm_sesi.
+#
+#
+#		Parametri: $1= cod_opzione
+#			   $2= task_subsys	
+#                          $3= comitver
+#                          $4= task_number
+#                          $5= resolver 
+#
+#*********************************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"   
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"   
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set progetto = $2
+set chk_comitver = $3
+set chk_task = $4
+set tsk_res  = $5
+
+
+if !($1 == "CheckForHPS" && ($5 == chk_sa || $5 == cm_sesi)) then
+  exit 0
+endif
+
+if ($5 == chk_sa) then
+  goto CHECK_SA
+else
+ if ($5 == cm_sesi) then
+   goto CHECK_SESI
+ endif
+endif
+
+
+#**********************************************************
+# Se la checkin e' effettuata da "chk_sa"? verifico la
+# corretta sequenza di checkin dei task assegnati a tale 
+# utente.
+#**********************************************************
+
+CHECK_SA:
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d $CCM45_DB`
+
+set comitver_lst = `ccm query "cvtype='task' and resolver='chk_sa' and status='task_assigned' and task_subsys='${progetto}'" -u -f "%comitver"`
+
+foreach ver (${comitver_lst})
+
+ if (${ver} < ${chk_comitver}) then
+  echo "MSG:ERRORE! le Migrazioni HPS devono essere rilasciate rispettando l'ordine di migrazione"
+  echo "MSG:Operazione Annullata. "
+  ccm stop
+  exit 1
+ endif
+end
+
+ccm stop 
+exit 0
+#**********************************************************
+# Se la checkin e' effettuata da "cm_sesi" verifico la
+# corretta sequenza di checkin dei task assegnati a tale 
+# utente.
+#**********************************************************
+
+CHECK_SESI:
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d $CCM45_DB`
+
+set comitver_lst = `ccm query "cvtype='task' and resolver='cm_sesi' and status='task_assigned' and task_subsys='${progetto}'" -u -f "%comitver"`
+
+foreach ver (${comitver_lst})
+
+ if (${ver} < ${chk_comitver}) then
+  echo "MSG:ERRORE! le Migrazioni HPS devono essere rilasciate rispettando l'ordine di migrazione"
+  echo "MSG:Operazione Annullata. "
+  ccm stop
+  exit 1
+ endif
+end
+
+ccm stop
+exit 0

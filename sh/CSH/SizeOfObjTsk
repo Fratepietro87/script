@@ -1,0 +1,33 @@
+#!/bin/csh
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CCM45_DBsource = "${CCM45_DB}/st_root/cache/source"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+ 
+setenv CCM_ADDR `ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}`
+
+ccm query "is_associated_cv_of(task$1~1:task:probtrac)" -u -f "%cvid %objectname" | grep -v dir | awk -F" " '{print ($1)}' > ${CCM45_DBlog}/Obj_of_Tsk.$1
+
+set fnd = `cat ${CCM45_DBlog}/Obj_of_Tsk.$1`
+set fndnum = `echo $#fnd`
+set sum = 0
+set i = 0
+
+while ($i < ${fndnum})
+  @ i++
+  set directory = `echo ${fnd[$i]} | awk '{print substr($1,4,2)}'`
+  @ sum+= `wc -c ${CCM45_DBsource}/\#${directory}/${fnd[$i]} | awk -F" " '{print ($1)}'` 
+end
+
+@ sum/= 1000
+
+ccm query -n task$1
+ccm attr -c objsize -t string -v ${sum} @1 
+
+if (${status}) then
+  ccm attr -m objsize -v ${sum} @1 
+endif
+
+ccm stop
+
+rm ${CCM45_DBlog}/Obj_of_Tsk.$1

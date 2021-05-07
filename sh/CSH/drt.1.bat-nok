@@ -1,0 +1,201 @@
+#!/bin/csh -xv
+#*************************************************************************
+# Elimino se gia' esistente il file temporaneo.
+#*************************************************************************
+if (-f /develop/confman/CMLOG/TEMP/drt.1.lst ) then
+  rm -f /develop/confman/CMLOG/TEMP/drt.1.lst
+endif
+
+#*************************************************************************
+# Start della sessione di Continuus
+#*************************************************************************
+setenv CCM_ADDR `ccm start -m -q -nogui -r developer -d /tst1/ccm_databases/ccbs -h omis123 -u /develop/confman/tmp -rc`
+
+#*************************************************************************
+# Cerco il nome e la versione del progetto che contiene il modulo
+#*************************************************************************
+set PROJECT_NAME = `ccm finduse -n drt -t executable -v 1 |grep "@" |nawk -F@ '{ print $2 }' |nawk -F- '{ print $1 }'`
+set PROJECT_VERSION = `ccm finduse -n drt -t executable -v 1 |grep "@" |nawk -F@ '{ print $2 }' |nawk -F- '{ print $2 }'`
+
+#*************************************************************************
+# Controllo che la workarea sia sulla macchina locale, e che sia quella
+# corretta.
+#*************************************************************************
+set PROJECT_WA = `ccm query "cvtype='project' and name='${PROJECT_NAME}' and version='${PROJECT_VERSION}'" -u -f "%wa_path"`
+if !(-f ${PROJECT_WA}/${PROJECT_NAME}/.ccmwaid.inf ) then
+  ccm stop
+  /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 22 drt omid017.omnitel.it
+  rm -f /develop/confman/CMLOG/TEMP/drt.1.bat&
+  exit 0
+else
+  set WA_VERSION = `tail -1 ${PROJECT_WA}/${PROJECT_NAME}/.ccmwaid.inf |nawk -F/ '{ n=split($0,A); print A[n] }'`
+  if ( ${WA_VERSION} != ${PROJECT_VERSION} ) then
+    ccm stop
+    /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 22 drt omid017.omnitel.it
+    rm -f /develop/confman/CMLOG/TEMP/drt.1.bat&
+    exit 0
+  endif
+endif
+
+#*************************************************************************
+# Setto il valore di base della workarea utente
+#*************************************************************************
+set BASE_WA = `ccm query "cvtype='project' and name='${PROJECT_NAME}' and version='${PROJECT_VERSION}'" -u -f "%wa_path" |nawk -Fccm_wa '{ print $1"ccm_wa" }'`
+
+#*************************************************************************
+# Cerco il numero degli elementi presenti nella riga.
+#*************************************************************************
+set NumeroElementi = `grep ":drt:" /develop/ccm_root/TRIGGER_SCRIPT/ccbs/cnf/ListaModuli.cfg |nawk '{ n=split($0,A); print n }'`
+
+#*************************************************************************
+# Se il numero di elementi e' maggiore di 1 li esamino, altrimenti 
+# significa che la riga contiene solo il nome del modulo e quindi esco
+# dopo aver mandato una mail per avvisare.
+#*************************************************************************
+if (${NumeroElementi} > 1 ) then
+  set k = 1
+
+#*************************************************************************
+# Esamino gli elementi della lista partendo dal secondo (il primo deve 
+# essere il nome del modulo)
+#*************************************************************************
+  while ($k < ${NumeroElementi})
+    @ k++
+    set PROGETTO = `grep ":drt:" /develop/ccm_root/TRIGGER_SCRIPT/ccbs/cnf/ListaModuli.cfg |nawk '{ n=split($0,A); print A['$k'] }'`
+
+#*************************************************************************
+# Per ogni progetto verifico se esiste almeno una versione con 
+# l'attributo "maintain_wa" a TRUE. Se si, ne metto l'elenco in
+# /develop/confman/CMLOG/TEMP/drt.1.prog.lst
+#*************************************************************************
+    if (`ccm query "cvtype='project' and name='${PROGETTO}' and is_relative=TRUE and maintain_wa=TRUE and owner='confman'" -f "%version" -u |wc -l` != 0 ) then
+      ccm query "cvtype='project' and name='${PROGETTO}' and is_relative=TRUE and maintain_wa=TRUE and owner='confman'" -f "%version" -u > /develop/confman/CMLOG/TEMP/drt.1.prog.lst
+      set Numero_Versioni = `cat /develop/confman/CMLOG/TEMP/drt.1.prog.lst |wc -l`
+      set i = 0
+      set TROVATO = 0
+
+#*************************************************************************
+# Per ogni progetto con workarea mantenuta, controllo se il wa_path e'
+# corrispondente a quello del modulo che sto esaminando. Se si, guardo se
+# se ha una baseline selezionata altrimenti prendo il predecessore.
+#*************************************************************************
+      while ($i < ${Numero_Versioni})
+        @ i++
+        set VERSIONE = `head -n $i /develop/confman/CMLOG/TEMP/drt.1.prog.lst |tail -1`
+        if (`ccm query "cvtype='project' and name='${PROGETTO}' and version='${VERSIONE}'" -u -f "%wa_path" |grep ${BASE_WA} |wc -l` == 1) then
+          set WA_PROGETTO = `ccm query "cvtype='project' and name='${PROGETTO}' and version='${VERSIONE}'" -u -f "%wa_path"`
+#*************************************************************************
+# Controllo di avere una workarea agganciata sulla macchina
+#*************************************************************************
+			 if (-f ${WA_PROGETTO}/${PROGETTO}/.ccmwaid.inf ) then
+            set WA_VERSION = `tail -1 ${WA_PROGETTO}/${PROGETTO}/.ccmwaid.inf |nawk -F/ '{ n=split($0,A); print A[n] }'`
+#*************************************************************************
+# Controllo che la workarea agganciata sia quella che sto esaminando.
+#*************************************************************************
+				if ( ${WA_VERSION} == ${VERSIONE} ) then
+              set i = ${Numero_Versioni}
+#*************************************************************************
+# Controllo se ho una baseline settata.
+#*************************************************************************
+				  if (`ccm rp -show baseline ${PROGETTO}-${VERSIONE}:project:1 |grep "does not have a baseline" |wc -l` == 1 ) then
+#*************************************************************************
+# Controllo se ho un predecessore (non ho una baseline)
+#*************************************************************************
+					 if (`ccm query "is_predecessor_of('${PROGETTO}-${VERSIONE}:project:1')" |wc -l` == 0) then
+#*************************************************************************
+# Non ho ne' predecessore ne' baseline
+#*************************************************************************
+                  /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 23 drt ${PROGETTO}-${VERSIONE}
+                else
+#*************************************************************************
+# Non ho una baseline per cui devo considerare il predecessore.
+#*************************************************************************
+                  set GOOD_VERSION = `ccm query "is_predecessor_of('${PROGETTO}-${VERSIONE}:project:1')" -u -f "%version"`
+                  @ TROVATO++
+                endif
+              else
+#*************************************************************************
+# Ho una baseline e la considero
+#*************************************************************************
+                set GOOD_VERSION = `ccm rp -show baseline ${PROGETTO}-${VERSIONE}:project:1 -u -f "%version"`
+                @ TROVATO++
+              endif
+            endif
+          endif
+        endif
+      end
+      if (-f /develop/confman/CMLOG/TEMP/drt.1.prog.lst) then
+        rm -f /develop/confman/CMLOG/TEMP/drt.1.prog.lst
+      endif
+
+#*************************************************************************
+# Se ho trovato una versione, controllo che non ci siano oggetti differenti
+# e le differenze eventuali le metto nel file delle dipendenze.
+#*************************************************************************
+		if (${TROVATO} != 0) then
+        echo "${PROGETTO}. Versione utilizzata: ${GOOD_VERSION}" >> /develop/confman/CMLOG/TEMP/drt.1.lst
+#*************************************************************************
+# Confronto il contenuto della workarea con quello della baseline; nel
+# caso differiscano, inserisco la lista degli oggetti modificati rispetto
+# alla baseline nel file delle dependencies.
+#*************************************************************************
+        ccm query "is_member_of('${PROGETTO}-${VERSIONE}:project:1')" -u -f "%name-%version:%type:%subsystem" |sort -u > /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.wa
+        ccm query "is_member_of('${PROGETTO}-${GOOD_VERSION}:project:1')" -u -f "%name-%version:%type:%subsystem" |sort -u > /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.bas
+        touch /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.new 
+        diff -b -e /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.bas /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.wa | grep ":" > /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.new 
+		  if (`cat /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.new| wc -l` != 0 ) then
+          echo "Oggetti modificati rispetto alla baseline ${GOOD_VERSION}" >> /develop/confman/CMLOG/TEMP/drt.1.lst
+          cat /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.new >> /develop/confman/CMLOG/TEMP/drt.1.lst
+          echo " " >> /develop/confman/CMLOG/TEMP/drt.1.lst
+#*************************************************************************
+# Nel caso la workarea differisca dalla baseline avviso la parte 
+# amministrativa.
+#*************************************************************************
+          /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 24 drt ${PROGETTO}-${VERSIONE}
+        endif
+        rm -f /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.new
+        rm -f /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.wa
+        rm -f /develop/confman/CMLOG/${PROJECT_NAME}.${PROGETTO}.bas
+      else
+        /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 25 drt ${PROGETTO}
+      endif
+    else
+      /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 26 drt ${PROGETTO}
+    endif
+  end
+else
+  /develop/ccm_root/TRIGGER_SCRIPT/ccbs/genera_mail ERRORE 20 drt
+  rm -f /develop/confman/CMLOG/TEMP/drt.1.bat&
+  ccm stop
+  exit 0
+endif
+
+#*************************************************************************
+# Se non esiste DEST_DIR la creo.
+#*************************************************************************
+if !(-d /develop/confman/CMLOG/MIGRATE/DRT) then
+  mkdir -p /develop/confman/CMLOG/MIGRATE/DRT
+endif
+
+#*************************************************************************
+# Muovo il file TEMP_FILE in DEST_FILE
+#*************************************************************************
+mv /develop/confman/CMLOG/TEMP/drt.1.lst /develop/confman/CMLOG/MIGRATE/DRT/drt.1.txt
+
+#*************************************************************************
+# Migro il file dentro Continuus
+#*************************************************************************
+ccm migrate -d /develop/confman/CMLOG/MIGRATE -p DEPENDENCIES-1 -st integrate
+
+#*************************************************************************
+# Elimino DEST_FILE
+#*************************************************************************
+if (-f /develop/confman/CMLOG/MIGRATE/DRT/drt.1.txt ) then
+  rm -f /develop/confman/CMLOG/MIGRATE/DRT/drt.1.txt
+endif
+
+#*************************************************************************
+# Fermo la sessione di Continuus.
+#*************************************************************************
+ccm stop
+

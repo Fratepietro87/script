@@ -1,0 +1,290 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     ftp_script
+#*
+#*          Copy from SWD_ROOT to dest CSHELL Script
+#*
+#* Author: Cavana Carlo 1999
+#* Modifyed: Capanei Magda 1999
+#* Modifyed: Brizzolara Luca 1999
+#*
+#* Parametri passati: $1 SWD_ROOT/AMBIENTE/PROJECT
+#*                    $2 AMBIENTE
+#*                    $3 PROJECT
+#*                    $4 NUM_CONSEGNA
+#*                    $5 DIR_ESTRAZIONE (notesdom)
+#***********************************************************************
+
+#**********************************************************************
+#*
+#* Remember to write your response_msg to $1/response.txt
+#*
+#**********************************************************************
+
+set CCM45 = "/usr/CONT_SRV/ccm45"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_NTS"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+set FTP_BATCH_DIR = "${CCM45_DB}/lib/notify/FtpBatch"
+set FTP_DIR = "${FTP_BATCH_DIR}/FTP"
+set COMMAND_DIR = "${FTP_BATCH_DIR}/COMANDI"
+set NUM_CONSEGNA = $4
+set AMBIENTE = $2
+set SAMPLE_DIR = "${FTP_BATCH_DIR}/SAMPLE"
+set SAMPLEJOB = "${SAMPLE_DIR}/sample.job"
+set SAMPLESTEP = "${SAMPLE_DIR}/sample.step"
+
+set FTP_NAME = "$3${NUM_CONSEGNA}.$2"
+set OLD_NAME = "$3${NUM_CONSEGNA}.cpo.$2"
+set NEW_NAME = "$3${NUM_CONSEGNA}.cpn.$2"
+set DELETE_NAME = "$3${NUM_CONSEGNA}.rmn.$2"
+set JOB_NAME = "$3${NUM_CONSEGNA}.job.$2"
+
+if (-d ${COMMAND_DIR}/${AMBIENTE} ) then
+  cp ${COMMAND_DIR}/${AMBIENTE}/* ${COMMAND_DIR}/DEPOT
+  rm -r ${COMMAND_DIR}/${AMBIENTE}
+endif
+mkdir ${COMMAND_DIR}/${AMBIENTE}
+
+
+if ($2 == CSU) then
+  set FINAL_DIR = "/notesdata_csu"
+  set TEMP_DIR = "/u/xntsin"
+  set BASE_SERVER = "LNCSU01:"
+  set user_dom = "XNTSIN"
+  set acc_num = "(920001240000TS)"
+
+else
+  if ($2 == SQA) then
+    set FINAL_DIR = "/notesdata_col"
+    set TEMP_DIR = "/u/xntsco"
+    set BASE_SERVER = "LNCOL01:"
+    set user_dom = "XNTSCO"
+    set acc_num = "(910001210000TS)"
+
+  else
+    if ($2 == PRD) then
+      set FINAL_DIR = "/notesdata_prd"
+      set TEMP_DIR = "/u/xntspr"
+      set BASE_SERVER = "LNPRD01:"
+      set user_dom = "XNTSPR"
+      set acc_num = "(910001210000TS)"
+    endif
+  endif
+endif
+
+
+#***********************************************************************
+# Creo le liste di comandi da lanciare direttamente su domino.
+#***********************************************************************
+
+set NEW_DIR = "${TEMP_DIR}/new"
+set OLD_DIR = "${TEMP_DIR}/old"
+set COMANDI_DOMINO_DIR = "${TEMP_DIR}/comandi"
+
+set FTP_FILE = "${FTP_DIR}/${FTP_NAME}"
+set COPY_TO_OLD = "${COMMAND_DIR}/${AMBIENTE}/${OLD_NAME}"
+set COPY_TO_NEW = "${COMMAND_DIR}/${AMBIENTE}/${NEW_NAME}"
+set DELETE_NEW = "${COMMAND_DIR}/${AMBIENTE}/${DELETE_NAME}"
+set JOB_MVS = "${COMMAND_DIR}/${AMBIENTE}/${JOB_NAME}"
+rm -f ${FTP_FILE} ${COPY_TO_OLD} ${COPY_TO_NEW} ${DELETE_NEW}
+
+
+# Genero il file COPY_TO_OLD
+find $1/$5 -type f |awk -F"$5" '{ print $2 }' |xargs ${SCRIPT_DIR}/genera_comandi_cp ${FINAL_DIR} ${OLD_DIR} ${COPY_TO_OLD}
+
+# Genero il file COPY_TO_NEW
+find $1/$5 -type f |awk -F"$5" '{ print $2 }' |xargs ${SCRIPT_DIR}/genera_comandi_cp ${NEW_DIR} ${FINAL_DIR} ${COPY_TO_NEW}
+
+# Genero il file DELETE_NEW
+find $1/$5 -type f |awk -F"$5" '{ print $2 }' |xargs ${SCRIPT_DIR}/genera_comandi_rm ${NEW_DIR} ${DELETE_NEW}
+
+# Genero il file JOB_MVS
+
+set num_obj = `cat ${SAMPLEJOB} | wc -l`
+set line_job = "${user_dom}CP JOB "
+set line_rest = "${acc_num},CM,MSGCLASS=T,CLASS=T,NOTIFY=${user_dom}"
+set i = 0
+while ($i < ${num_obj})
+  @ i++
+  set linea = `head -n $i ${SAMPLEJOB}  | tail -n 1`
+  if (`echo "${linea}" | grep JOB | wc -l` != 0)  then
+    echo "//"${line_job} ${line_rest} > ${JOB_MVS}
+  else
+    echo "//*"${linea} >> ${JOB_MVS}
+  endif
+end
+
+
+# Attenzione all'ordine dei file comandi:
+
+echo ${COPY_TO_OLD} > ${COMMAND_DIR}/comandi.tmp
+echo ${COPY_TO_NEW} >> ${COMMAND_DIR}/comandi.tmp
+echo ${DELETE_NEW} >> ${COMMAND_DIR}/comandi.tmp
+set cmdlist = `cat ${COMMAND_DIR}/comandi.tmp | grep .$2 | awk -F/$2/ '{ print ($2) }'`
+
+foreach kind (${cmdlist})
+  set type_cmd = ` echo ${kind} | awk -F. '{ print toupper ($2) }'`
+  if ( ${type_cmd} == CPO ) then
+    set cond_code = ""
+  else
+    set cond_code = ",COND=(01,LT)"
+  endif
+  set num_obs = `cat ${SAMPLESTEP} | wc -l`
+  set line_step = "//${type_cmd}  EXEC PGM=BPXBATCH${cond_code}"
+  set line_stdin = "//STDIN    DD PATH='${COMANDI_DOMINO_DIR}/${kind}"
+  set line_stdout = "//STDOUT  DD PATH='${TEMP_DIR}"
+  set line_stderr = "//STDERR  DD SYSOUT="
+  set j = 0
+  while ($j < ${num_obs} )
+    @ j++
+    set lineb = `head -n $j ${SAMPLESTEP} | tail -n 1`
+    if (`echo ${lineb} | grep + | wc -l` != 0) then
+      echo "//*"${lineb} >> ${JOB_MVS}
+    else
+      if (`echo ${lineb} | grep STDIN | wc -l` != 0) then
+        echo ${line_stdin}"'" >> ${JOB_MVS}
+      else
+        if (`echo ${lineb} | grep P01 | wc -l` != 0) then
+          echo ${line_step} >> ${JOB_MVS} 
+        else
+          if (`echo ${lineb} | grep STDOUT | wc -l` != 0) then
+            echo ${line_stdout}"/response.txt'" >> ${JOB_MVS} 
+          else
+            if (`echo ${lineb} | grep STDERR | wc -l` != 0) then
+              echo  ${line_stderr}"*" >> ${JOB_MVS}
+            endif
+          endif
+        endif
+      endif
+    endif
+  end
+end
+rm ${COMMAND_DIR}/comandi.tmp
+
+
+#***********************************************************************
+# Inizio a produrre il file che poi sara' lanciato per fare l'ftp 
+#***********************************************************************
+
+cat > ${FTP_FILE} << EndOfInput1
+#!/bin/csh
+#***********************************************************************
+# Realizzo l'ftp dei file di comandi su D390
+#***********************************************************************
+if (-f ${CCM45}/.netrc) then
+  rm ${CCM45}/.netrc
+endif
+${SCRIPT_DIR}/Createnetrc_script_comandi $2 ${COMMAND_DIR} ${COMANDI_DOMINO_DIR}
+
+set Ip = \`cat ${SCRIPT_DIR}/LoginPasswd | grep $2 | awk '{print \$2}'\`
+
+#	***************************************
+#	Set ccm_root home directory
+#	***************************************
+set HomeDir = \${home}
+set home = "/usr/CONT_SRV/ccm45"
+
+ftp -i \$Ip &
+
+sleep 2
+set FERMO = 0
+while (\${FERMO} == 0)
+  if (\`ps -ef |grep ftp |grep ccm_root|grep -v grep |grep -v sc |grep -v man| wc -l\` == 0) then
+    set FERMO = 1
+  else
+    sleep 2
+  endif
+end
+
+set home = \${HomeDir}
+
+
+#***********************************************************************
+# Check directory name over notesdat directory (is gcf or nts)
+#***********************************************************************
+set cons = \`ls -l $1/$5 | awk '/^d/ {print \$9}'\`
+
+
+#***********************************************************************
+# I suppose that i can extract one or more applications (GCF,NTS,ecc..)
+# but only one directory (modelli or mod_od) under those
+#***********************************************************************
+foreach kind (\${cons})
+
+#***************************************
+#Check directory name over notesdat/kind
+#directory (is modelli or mod_oa)
+#***************************************
+  set mod = \`ls -l $1/$5/\${kind} | awk '/^d/ {print \$9}'\`
+  set num_dir = \`echo \$#mod\`
+  set i = 0
+  while (\$i < \${num_dir})
+    @ i++
+    set sub_directory = \`echo \${mod[\$i]}\`
+    if (-f ${CCM45}/.netrc) then
+      rm ${CCM45}/.netrc
+    endif
+    ${SCRIPT_DIR}/Createnetrc_script $2 \${kind}/\${sub_directory} ${NEW_DIR} $1/$5
+
+    set Ip = \`cat ${SCRIPT_DIR}/LoginPasswd | grep $2 | awk '{print \$2}'\`
+
+    set HomeDir = \${home}
+    set home = "/usr/CONT_SRV/ccm45"
+
+    ftp -i \$Ip &
+
+    sleep 2
+    set FERMO = 0
+    while (\${FERMO} == 0)
+      if (\`ps -ef |grep ccm_root|grep ftp |grep -v sc |grep -v grep |grep -v man| wc -l\` == 0) then
+        set FERMO = 1
+      else
+        sleep 2
+      endif
+    end
+    set home = \${HomeDir}
+  end
+
+
+
+#	***************************************
+# 	Create file /usr/CONT_SRV/ccm45/.netrc for
+#	next ftp step
+#	***************************************
+  if (-f ${CCM45}/.netrc) then
+    rm ${CCM45}/.netrc
+  endif
+  ${SCRIPT_DIR}/Createnetrc_script $2 \${kind} ${NEW_DIR} $1/$5
+
+  set Ip = \`cat ${SCRIPT_DIR}/LoginPasswd | grep $2 | awk '{print \$2}'\`
+
+#	***************************************
+#	Set ccm_root home directory
+#	***************************************
+  set HomeDir = \${home}
+  set home = "/usr/CONT_SRV/ccm45"
+
+  ftp -i \$Ip &
+
+  sleep 2
+  set FERMO = 0
+  while (\${FERMO} == 0)
+    if (\`ps -ef |grep ccm_root|grep ftp |grep -v sc |grep -v grep |grep -v man| wc -l\` == 0) then
+      set FERMO = 1
+    else
+      sleep 2
+    endif
+  end
+  set home = \${HomeDir}
+end
+
+exit 0
+
+EndOfInput1
+
+chmod 744 ${FTP_FILE}
+${FTP_FILE}
+
+exit 0
+

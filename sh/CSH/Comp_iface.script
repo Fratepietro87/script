@@ -1,0 +1,53 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    Comp_iface.script 
+#*
+#* Goal: Compilazione interfacce DataSim
+#*
+#* Parameters: $1 progetto 
+#*             $2 comitver 
+#*
+#* Author: Luca Brizzolara Dec 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Setto variabili di ambiente
+# **********************************************************************
+
+set WA_PATH = "/usr/CONT_SRV/dvp_dts/ccm_wa/DB_GPM"
+set SCRIPT_REMOTE_DIR = "/u/dsim/CM45_DIR/SCRIPT"
+set TEMP_DIR = "/u/dsim/CM45_DIR/SVILUPPO"
+set Log_Sviluppatori = "/usr/local/luca/Log_sviluppo"
+
+# **********************************************************************
+# Controllo presenza file da compilare
+# **********************************************************************
+
+shift
+shift
+
+while ($#argv != 0)
+  set NomeConPath = `find ${WA_PATH} -name "$1"`
+  echo "$1 e' ${NomeConPath}" >> ${Log_Sviluppatori}
+  if (`cat ${NomeConPath}|grep main|wc -l` == 0) then
+    echo "$1 e' una routine" >> ${Log_Sviluppatori}
+    remsh c-gpm1-c -l dsim -n "rcp g-gpm2-c:${NomeConPath} ${TEMP_DIR}/routine"
+    echo "Copio ${NomeConPath} in ${TEMP_DIR}/routine" >> ${Log_Sviluppatori}
+  else
+    remsh c-gpm1-c -l dsim -n "rcp c-gpm2-c:${nome_file} ${TEMP_DIR}/interface"
+    echo "$1 e' un interface" >> ${Log_Sviluppatori}
+    echo "Copio ${NomeConPath} in ${TEMP_DIR}/interface" >> ${Log_Sviluppatori}
+  endif
+  shift
+end
+echo "parto con la compilazione in remsh" >> ${Log_Sviluppatori}
+remsh c-gpm1-c  -l dsim -n "${SCRIPT_REMOTE_DIR}/Compila_iface.ksh $1 $2"
+set Errore = ${status}
+echo "Fine parte di compilazione" >> ${Log_Sviluppatori}
+if (${Errore}) then
+  exit 1
+else
+  exit 0
+endif

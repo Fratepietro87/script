@@ -1,0 +1,110 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    CloseFixSWD_script 
+#*
+#*          Utilixxanto quando swd_dtm completa il suo task, vengono completati
+#*          i task referenziati nell'attributo jolly (e' il nome di un
+#*          file).
+#*
+#* Parametri passati: $1 cod_opzione
+#*                    $2 creator
+#*                    $3 resolver
+#*                    $4 task_number
+#*                    $5 jolly
+#*                    $6 comitver
+#*
+#* Author: Luca Brizzolara Nov 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+
+CheckSWD:
+# **********************************************************************
+# SWD Actions check
+# **********************************************************************
+if (($1 != "Migraz.Fix" && $1 != "Compilaz.Fix") || ($3 != swd_dtm)) then
+  exit 0
+else
+  set  envr = `echo $6 | awk '{print tolower(substr($1,1,3))}'`
+endif
+
+set fname = `cat $5 | awk -F' ' '{ n=split($0,A); for (x in A) print A[x]}'`
+set fnum = `echo $#fname`
+set i = 0
+
+#Modifica parte per mail con Rebol
+
+#setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+#/usr/CONT_SRV/rebol/script/mailer.r emailSWD $6 $5 >> /usr/CONT_SRV/rebol/log/mail_log &
+
+
+if (${fnum} >= 0) then
+  echo "MSG:$1 $6 Eseguita."
+  if (${fnum} > 0) then
+    echo "MSG:${fnum} Nuove Consegne Distribuite: "
+  else
+    echo "MSG:Nessuna nuova Consegna Distribuita."
+    set consegna = " "
+  endif
+else
+  echo "MSG:ERRORE Operazione Annullata. Contattare CM/Administrator."
+  echo "ERROR_MSG:ERROR on SWD $6" >>&/$CCM45_DBlog/ErrMsg
+  exit 1
+endif
+
+while ($i < ${fnum})
+  @ i++
+  set consegna = `echo ${fname[$i]} | awk -F"-" '{print ($2)}'` 
+  echo "MSG: ${consegna} "
+end
+
+#**********************************************************************
+# Create the Script.
+#**********************************************************************
+
+cat > ${CCM45_DBlog}/$4EndSWD.LOCK <<EndOfInput2
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+
+set fname = \`cat $5 | awk -F' ' '{ n=split(\$0,A); for (x in A) print A[x]}'\`
+set fnum = \`echo \$#fname\`
+set i = 0
+while (\$i < ${fnum})
+  @ i++
+  set ghost_task = \`echo \${fname[\$i]} | awk -F"-" '{print (\$1)}'\` 
+  set consegna = \`echo \${fname[\$i]} | awk -F"-" '{print (\$2)}'\` 
+  set VER = \`echo \${consegna} | awk '{print substr(\$1,1,5)}'\`
+  set subsys = \`echo \${consegna} | awk '{print substr(\$1,1,3)}'\`
+  set comitv = \`echo \${consegna} | awk '{print substr(\$1,4,5)}'\`
+
+  ccm query -t task -name task\${ghost_task}
+  ccm attr -c resolver -t string -v "cm_sesi" @1 
+  ccm attr -m status -v "task_assigned" @1
+  set data_check = \`date +"%a %e %m %Y"\`
+  ccm task -checkin \${ghost_task} -c "SWD Completed: \${consegna}~$6 \${data_check}"
+
+# **********************************************************************
+# Cancellazione directory di migrazione della consegna
+# **********************************************************************
+
+  if (($6 == SQA)&&(\${subsys} != "FMX")&&(\${subsys} != "FRM")&&(\${subsys} != "SHE")&&(\${subsys} != "SIS")&&(\${subsys} != "SQL")) then
+    rm -r /usr/CONT_SRV/MIG_DB_GPM/\${consegna}  &
+  endif
+			 
+end
+
+ccm stop
+rm ${CCM45_DBlog}/$4EndSWD.LOCK &
+EndOfInput2
+
+#**********************************************************************
+# Run the Script.
+#**********************************************************************
+
+source ${CCM45_DBlog}/$4EndSWD.LOCK &

@@ -1,0 +1,88 @@
+#!/bin/csh
+#******************************************************************
+#                CM_Pack_script
+#
+# Goal: script per realizzare il pack del database $1
+#
+# Parameters: $1 nome del database
+#
+# Author: Luca Brizzolara, June 2000
+#
+#******************************************************************
+
+#******************************************************************
+# Set Variabili globali
+#******************************************************************
+set DIR_SCRIPT = "/ccm_users/Script_Dir"
+set PARAMETERS_LST = "${DIR_SCRIPT}/Pack_lst"
+set DATE = `date +%d%m%y`
+
+if ($#argv != 1) then
+  echo "USAGE: CM_Pack_script DB_NAME"
+  exit 1
+endif
+set DB_NAME = $1
+
+#******************************************************************
+# Verifico l'esistenza del file dei parametri
+#******************************************************************
+if !(-f ${PARAMETERS_LST}) then
+  echo "ERRORE: Il file ${PARAMETERS_LST} non esiste"
+  echo "Operazione annullata"
+  exit 1
+endif
+
+#******************************************************************
+# Verifico che il file dei parametri contenga le informazioni per
+# per il database $1
+#******************************************************************
+if (`grep "\:$1\:" ${PARAMETERS_LST} |wc -l` != 1) then
+  echo "ERRORE:Il file ${PARAMETERS_LST} NON contiene informazioni per il database $1"
+  echo "Operazione annullata"
+  exit 1
+endif
+
+if (`grep "\:$1\:" ${PARAMETERS_LST} |awk '{ print length($2) }'` == 0 ) then
+  echo "ERRORE:Il file ${PARAMETERS_LST} non contiene alcun valore per Pack_Dir di $1"
+  echo "Operazione annullata"
+  exit 1
+endif
+set Pack_Dir = `grep "\:$1\:" ${PARAMETERS_LST} |awk '{ print $2 }'`
+
+if !(-d ${Pack_Dir}) then
+  echo "ERRORE:La directory per i pack-files ${Pack_Dir}"
+  echo "contenuta in ${PARAMETERS_LST}"
+  echo "per il database $1, non esiste o non e' una directory"
+  echo "Operazione annullata"
+  exit 1
+endif
+
+if (`grep "\:$1\:" ${PARAMETERS_LST} |awk '{ print length($3) }'` == 0) then
+  echo "ERRORE:Il file ${PARAMETERS_LST} non contiene alcun valore per DatabasePath di $1"
+  echo "Operazione annullata"
+  exit 1
+endif
+set DatabasePath = `grep "\:$1\:" ${PARAMETERS_LST} |awk '{ print $3 }'`
+
+if !(-d ${DatabasePath}) then
+  echo "ERRORE:La directory ${DatabasePath} che dovrebbe contenere il database non esiste"
+  echo "oppure non e' una directory. Controllare i parametri."
+  echo "Operazione annullata"
+  exit 1
+endif
+
+set DB_NAME = "${DatabasePath}/$1"
+if !(-d ${DB_NAME}) then
+  echo "ERRORE:Esiste la directory ${DatabasePath} ma il database ${DB_NAME} NON esiste."
+  echo "Verificare i parametri."
+  echo "Operazione annullata"
+  exit 1
+endif
+
+echo "Check Dei Parametri OK"
+
+set PACK_NAME = "$1${DATE}.cpk"
+set PACK_FILE = "${Pack_Dir}/${PACK_NAME}"
+
+ccmdb pack ${DB_NAME} -to ${PACK_FILE}
+exit 0

@@ -1,0 +1,41 @@
+#!/bin/csh
+#***********************************************************************
+#*                       CheckTabella
+#* 
+#* Goal: Verificare l'esistenza della tabella quando necessaria a  
+#*       controllare l'alberatura della consegna.
+#*       I codici di ritorno sono: 
+#*       0 - tutto ok
+#*       1 - Il file contenente la tabella non esiste. 
+#*       2 - La tabella esiste ma non e' leggibile.
+#*
+#*       ATTENZIONE: esco al primo errore riscontrato.
+#*
+#* Parametri passati:$1 Directory del progetto dove sara'collocata la tabella
+#*                   $2 File di log dove inserire i messaggi di errore
+#* 			relativi alla specifica tabella.
+#* 
+#* Autore: Luca Brizzolara - Feb 2000
+#* 
+#***********************************************************************
+
+set TAB_ROOT = $1
+set TAB_LOG = $2
+set TAB_NAME = "DoMig_script.ini"
+set TABELLA = "${TAB_ROOT}/${TAB_NAME}"
+
+echo ${TAB_NAME} >> ${TAB_LOG}
+
+if !( -f ${TABELLA} ) then
+   exit 1
+endif
+
+if !( -r ${TABELLA} ) then
+   exit 2
+endif
+
+
+#***********************************************************************
+# I controlli hanno dato esito positivo.
+#***********************************************************************
+exit 0

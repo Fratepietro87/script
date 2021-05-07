@@ -1,0 +1,37 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                  genera_comandi_cp
+#*
+#*
+#* Author: Brizzolara Luca 1999
+#* Parametri: $1 SOURCE (directory)
+#*            $2 TARGET (directory)
+#*            $3 FILE_COMANDI
+#***********************************************************************
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set SOURCE = $1
+set TARGET = $2
+set FILE_COMANDI = $3
+
+# **********************************************************************
+# File system structure check
+# **********************************************************************
+
+set n = 0
+while ($n != 3)
+  shift
+  set n = `expr $n + 1`
+end
+
+
+while ($#argv != 0)
+  set FILE_NAME = $1
+  echo "cp ${SOURCE}${FILE_NAME} ${TARGET}${FILE_NAME}" >> ${FILE_COMANDI}
+  shift
+end
+

@@ -1,0 +1,378 @@
+#!/bin/csh
+##########################################################################
+#*
+#*                   RicercaListaVersioni
+#*
+#* Goal: Ricercare per ogni modulo il cui nome e' in LISTA_MODULI
+#*       l'elenco delle versioni di progetto in uso al momento della 
+#*       compilazione
+#*
+#* Parameters: $1 nome oggetto
+#*             $2 versione oggetto
+#*             $3 tipo oggetto
+#*             $4 owner oggetto
+#*
+#* Author: Luca Brizzolara, Feb 2001
+#* Modified: Luca Brizzolara, Sep 2001
+#*
+##########################################################################
+
+#*************************************************************************
+# Definizione variabili globali
+#*************************************************************************
+set CCM51_DB = "/tst1/ccm_databases/ccbs"
+set SCRIPT_DIR = "${CCM51_DB}/lib/notify/Unix"
+set LISTA_CONFIG_DIR = "${CCM51_DB}/lib/notify/cnf"
+set PERSONAL_DIR = "${HOME}/CMLOG"
+set REMOTE_TRIGGER_DIR = "/develop/ccm_root/TRIGGER_SCRIPT/ccbs"
+set TEMP_DIR = "${PERSONAL_DIR}/TEMP"
+set DEST_BASE_DIR = "${PERSONAL_DIR}/MIGRATE"
+set conta = 0
+
+#*************************************************************************
+# Verifico la presenza del path con il file di configurazione in locale
+#*************************************************************************
+set conta=`expr $conta + 1 `;
+echo $conta"# Verifico la presenza del path con il file di configurazione in locale";
+if !(-d ${LISTA_CONFIG_DIR} ) then
+  set LISTA_CONFIG_DIR = "/develop/ccm_root/TRIGGER_SCRIPT/ccbs/cnf"
+endif
+set LISTA_MODULI = "${LISTA_CONFIG_DIR}/ListaModuli.cfg"
+
+#*************************************************************************
+# Definisco il nome della script per lanciare la mail
+#*************************************************************************
+set LANCIA_MAIL = "${SCRIPT_DIR}/genera_mail"
+set conta=`expr $conta + 1 `;
+echo $conta"# Definisco il nome della script per lanciare la mail";
+if !(-f ${LANCIA_MAIL} ) then
+  set LANCIA_MAIL = "${REMOTE_TRIGGER_DIR}/genera_mail"
+endif
+
+#*************************************************************************
+# Variabile di configurazione; consente di decidere se, nel caso il file
+# LISTA_MODULI risulti ambiguo (due righe), fermare la transizione di stato
+# del modulo o limitarsi ad avvertire. I valori possibili sono:
+# 1 - Blocco la checkin
+# 0 - Non blocco la checkin
+#*************************************************************************
+set FERMO = 0
+
+#*************************************************************************
+# Definisco il nome del progetto in cui migrare il software
+#*************************************************************************
+set MIGRATE_PROJECT = "DEPENDENCIES"
+set MIGRATE_VERSIONE = "1"
+
+#*************************************************************************
+# Leggo il nome del modulo
+#*************************************************************************
+set MODULO_NAME = $1
+#*************************************************************************
+# Controllo se il file in questione e' nella lista LISTA_MODULI
+#*************************************************************************
+set conta=`expr $conta + 1 `;
+echo $conta"# Controllo se il file in questione e' nella lista LISTA_MODULI";
+if (`grep ":${MODULO_NAME}:" ${LISTA_MODULI} |wc -l` == 0) then
+  exit 0
+endif
+
+#*************************************************************************
+# Se l'identificazione dell'elemento e' ambiguo mando un avviso ed esco.
+#*************************************************************************
+set conta=`expr $conta + 1 `;
+echo $conta"# Se l'identificazione dell'elemento e' ambiguo mando un avviso ed esco.";
+if (`grep ":${MODULO_NAME}:" ${LISTA_MODULI} |wc -l` != 1) then
+  echo "MSG:ERRORE. Il file ${LISTA_MODULI} contiene piu' di una linea"
+  echo "MSG:per il modulo ${MODULO_NAME}"
+  set conta=`expr $conta + 1 `;
+  echo $conta"# Se l'identificazione dell'elemento e' ambiguo mando un avviso ed esco. 1";
+  echo $FERMO
+  if (${FERMO} == 0) then
+    echo "MSG:L'operazione di checkin viene completata"
+    echo "MSG:ma non viene importato il file con l'elenco dei componenti."
+    exit 0
+  else
+    echo "MSG:L'operazione di checkin viene respinta"
+    echo "MSG:Sistemare il file e riprovare"
+    exit 1
+  endif
+endif
+
+#*************************************************************************
+# Verifico che il primo elemento della lista sia il nome del modulo.
+# Gestisco se andare avanti (in caso non sia il nome del modulo) a seconda
+# del valore di FERMO (vedi commento precedente)
+#*************************************************************************
+set conta=`expr $conta + 1 `;
+echo $conta" # Verifico che il primo elemento della lista sia il nome del modulo.";
+if (`grep ":${MODULO_NAME}:" ${LISTA_MODULI}|awk '{ print $1 }' |grep ":${MODULO_NAME}:" |wc -l` != 1) then
+  echo "MSG:ERRORE. Il file ${LISTA_MODULI} contiene una linea"
+  echo "MSG:per il modulo ${LISTA_MODULI}"
+  echo "MSG:ma la sintassi della riga non e' corretta"
+  echo $FERMO
+  set conta=`expr $conta + 1 `;
+  echo $conta"# Verifico che il primo elemento della lista sia il nome del modulo. 1";
+  if (${FERMO} == 0) then
+    echo "MSG:L'operazione di checkin viene completata"
+    echo "MSG:ma non viene importato il file con l'elenco dei componenti."
+    exit 0
+  else
+    echo "MSG:L'operazione di checkin viene respinta"
+    echo "MSG:Sistemare il file e riprovare"
+    exit 1
+  endif
+endif
+
+#*************************************************************************
+# Lettura dei parametri di lancio della script
+#*************************************************************************
+set MODULO_VERSIONE = $2
+set MODULO_TYPE = $3
+set OWNER = $4
+
+#*************************************************************************
+# Creo alcune directory che possono essere utili
+#*************************************************************************
+set conta=`expr $conta + 1 `;
+if !(-d ${PERSONAL_DIR} ) then
+  mkdir -p ${PERSONAL_DIR}
+endif
+set conta=`expr $conta + 1 `; 
+if !(-d ${TEMP_DIR} ) then
+  mkdir -p ${TEMP_DIR}
+endif
+
+
+#*************************************************************************
+# Mando un messaggio all'utente per segnalare la partenza del batch
+#*************************************************************************
+echo "MSG:Procedura per la generazione della lista dei componenti in corso."
+
+#*************************************************************************
+# Setto il nome del file di destinazione
+# Nel caso il nome contenga un punto la directory di migrazione verra'
+# settata troncandone il nome prima del "."
+#*************************************************************************
+
+set MODULO_DIR_NAME = `echo ${MODULO_NAME} |cut -f1 -d. |nawk '{ print toupper($0) }'`
+echo "MODULO_DIR_NAME "$MODULO_DIR_NAME 
+set DEST_DIR = "${DEST_BASE_DIR}/${MODULO_DIR_NAME}"
+echo "DEST_DIR "$DEST_DIR 
+set DEST_FILE = "${DEST_DIR}/${MODULO_NAME}.${MODULO_VERSIONE}.txt"
+echo "DEST_FILE  "$DEST_FILE  
+set BATCH_FILE = "${TEMP_DIR}/${MODULO_NAME}.${MODULO_VERSIONE}.bat"
+echo "BATCH_FILE  "$BATCH_FILE  
+set TEMP_FILE = "${TEMP_DIR}/${MODULO_NAME}.${MODULO_VERSIONE}.lst"
+echo "TEMP_FILE  "$TEMP_FILE  
+set LISTA_VER_PROJ = "${TEMP_DIR}/${MODULO_NAME}.${MODULO_VERSIONE}.prog.lst"
+echo "LISTA_VER_PROJ  "$LISTA_VER_PROJ  
+
+#*************************************************************************
+# Inizio a scrivere il batch che creera 
+#*************************************************************************
+cat > ${BATCH_FILE} << EndOfInput
+
+#*************************************************************************
+# Elimino se gia' esistente il file temporaneo.
+#*************************************************************************
+if (-f ${TEMP_FILE} ) then
+  rm -f ${TEMP_FILE}
+endif
+
+#*************************************************************************
+# Start della sessione di Continuus
+#*************************************************************************
+setenv CCM_ADDR \`ccm start -m -q -nogui -r developer -d ${CCM51_DB} -h omis123 -u $HOME/tmp -rc\`
+
+#*************************************************************************
+# Cerco il nome e la versione del progetto che contiene il modulo
+#*************************************************************************
+set PROJECT_NAME = \`ccm finduse -n ${MODULO_NAME} -t ${MODULO_TYPE} -v ${MODULO_VERSIONE} |grep "@" |nawk -F@ '{ print \$2 }' |nawk -F- '{ print \$1 }'\`
+set PROJECT_VERSION = \`ccm finduse -n ${MODULO_NAME} -t ${MODULO_TYPE} -v ${MODULO_VERSIONE} |grep "@" |nawk -F@ '{ print \$2 }' |nawk -F- '{ print \$2 }'\`
+
+#*************************************************************************
+# Controllo che la workarea sia sulla macchina locale, e che sia quella
+# corretta.
+#*************************************************************************
+set PROJECT_WA = \`ccm query "cvtype='project' and name='\${PROJECT_NAME}' and version='\${PROJECT_VERSION}'" -u -f "%wa_path"\`
+if !(-f \${PROJECT_WA}/\${PROJECT_NAME}/.ccmwaid.inf ) then
+  ccm stop
+  ${LANCIA_MAIL} ERRORE 22 ${MODULO_NAME} `hostname`
+  rm -f ${BATCH_FILE}&
+  exit 0
+else
+  set WA_VERSION = \`tail -1 \${PROJECT_WA}/\${PROJECT_NAME}/.ccmwaid.inf |nawk -F/ '{ n=split(\$0,A); print A[n] }'\`
+  if ( \${WA_VERSION} != \${PROJECT_VERSION} ) then
+    ccm stop
+    ${LANCIA_MAIL} ERRORE 22 ${MODULO_NAME} `hostname`
+    rm -f ${BATCH_FILE}&
+    exit 0
+  endif
+endif
+
+#*************************************************************************
+# Setto il valore di base della workarea utente
+#*************************************************************************
+set BASE_WA = \`ccm query "cvtype='project' and name='\${PROJECT_NAME}' and version='\${PROJECT_VERSION}'" -u -f "%wa_path" |nawk -Fccm_wa '{ print \$1"ccm_wa" }'\`
+
+#*************************************************************************
+# Cerco il numero degli elementi presenti nella riga.
+#*************************************************************************
+set NumeroElementi = \`grep ":${MODULO_NAME}:" ${LISTA_MODULI} |nawk '{ n=split(\$0,A); print n }'\`
+
+#*************************************************************************
+# Se il numero di elementi e' maggiore di 1 li esamino, altrimenti 
+# significa che la riga contiene solo il nome del modulo e quindi esco
+# dopo aver mandato una mail per avvisare.
+#*************************************************************************
+if (\${NumeroElementi} > 1 ) then
+  set k = 1
+
+#*************************************************************************
+# Esamino gli elementi della lista partendo dal secondo (il primo deve 
+# essere il nome del modulo)
+#*************************************************************************
+  while (\$k < \${NumeroElementi})
+    @ k++
+    set PROGETTO = \`grep ":${MODULO_NAME}:" ${LISTA_MODULI} |nawk '{ n=split(\$0,A); print A['\$k'] }'\`
+
+#*************************************************************************
+# Per ogni progetto verifico se esiste almeno una versione con 
+# l'attributo "maintain_wa" a TRUE. Se si, ne metto l'elenco in
+# ${LISTA_VER_PROJ}
+#*************************************************************************
+    if (\`ccm query "cvtype='project' and name='\${PROGETTO}' and is_relative=TRUE and maintain_wa=TRUE and owner='${OWNER}'" -f "%version" -u |wc -l\` != 0 ) then
+      ccm query "cvtype='project' and name='\${PROGETTO}' and is_relative=TRUE and maintain_wa=TRUE and owner='${OWNER}'" -f "%version" -u > ${LISTA_VER_PROJ}
+      set Numero_Versioni = \`cat ${LISTA_VER_PROJ} |wc -l\`
+      set i = 0
+      set TROVATO = 0
+
+#*************************************************************************
+# Per ogni progetto con workarea mantenuta, controllo se il wa_path e'
+# corrispondente a quello del modulo che sto esaminando. Se si, guardo se
+# se ha una baseline selezionata altrimenti prendo il predecessore.
+#*************************************************************************
+      while (\$i < \${Numero_Versioni})
+        @ i++
+        set VERSIONE = \`head -n \$i ${LISTA_VER_PROJ} |tail -1\`
+        if (\`ccm query "cvtype='project' and name='\${PROGETTO}' and version='\${VERSIONE}'" -u -f "%wa_path" |grep \${BASE_WA} |wc -l\` == 1) then
+          set WA_PROGETTO = \`ccm query "cvtype='project' and name='\${PROGETTO}' and version='\${VERSIONE}'" -u -f "%wa_path"\`
+#*************************************************************************
+# Controllo di avere una workarea agganciata sulla macchina
+#*************************************************************************
+			 if (-f \${WA_PROGETTO}/\${PROGETTO}/.ccmwaid.inf ) then
+            set WA_VERSION = \`tail -1 \${WA_PROGETTO}/\${PROGETTO}/.ccmwaid.inf |nawk -F/ '{ n=split(\$0,A); print A[n] }'\`
+#*************************************************************************
+# Controllo che la workarea agganciata sia quella che sto esaminando.
+#*************************************************************************
+				if ( \${WA_VERSION} == \${VERSIONE} ) then
+              set i = \${Numero_Versioni}
+#*************************************************************************
+# Controllo se ho una baseline settata.
+#*************************************************************************
+				  if (\`ccm rp -show baseline \${PROGETTO}-\${VERSIONE}:project:1 |grep "does not have a baseline" |wc -l\` == 1 ) then
+#*************************************************************************
+# Controllo se ho un predecessore (non ho una baseline)
+#*************************************************************************
+					 if (\`ccm query "is_predecessor_of('\${PROGETTO}-\${VERSIONE}:project:1')" |wc -l\` == 0) then
+#*************************************************************************
+# Non ho ne' predecessore ne' baseline
+#*************************************************************************
+                  ${LANCIA_MAIL} ERRORE 23 ${MODULO_NAME} \${PROGETTO}-\${VERSIONE}
+                else
+#*************************************************************************
+# Non ho una baseline per cui devo considerare il predecessore.
+#*************************************************************************
+                  set GOOD_VERSION = \`ccm query "is_predecessor_of('\${PROGETTO}-\${VERSIONE}:project:1')" -u -f "%version"\`
+                  @ TROVATO++
+                endif
+              else
+#*************************************************************************
+# Ho una baseline e la considero
+#*************************************************************************
+                set GOOD_VERSION = \`ccm rp -show baseline \${PROGETTO}-\${VERSIONE}:project:1 -u -f "%version"\`
+                @ TROVATO++
+              endif
+            endif
+          endif
+        endif
+      end
+      if (-f ${LISTA_VER_PROJ}) then
+        rm -f ${LISTA_VER_PROJ}
+      endif
+
+#*************************************************************************
+# Se ho trovato una versione, controllo che non ci siano oggetti differenti
+# e le differenze eventuali le metto nel file delle dipendenze.
+#*************************************************************************
+		if (\${TROVATO} != 0) then
+        echo "\${PROGETTO}. Versione utilizzata: \${GOOD_VERSION}" >> ${TEMP_FILE}
+#*************************************************************************
+# Confronto il contenuto della workarea con quello della baseline; nel
+# caso differiscano, inserisco la lista degli oggetti modificati rispetto
+# alla baseline nel file delle dependencies.
+#*************************************************************************
+        ccm query "is_member_of('\${PROGETTO}-\${VERSIONE}:project:1')" -u -f "%name-%version:%type:%subsystem" |sort -u > ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.wa
+        ccm query "is_member_of('\${PROGETTO}-\${GOOD_VERSION}:project:1')" -u -f "%name-%version:%type:%subsystem" |sort -u > ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.bas
+        touch ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.new 
+        diff -b -e ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.bas ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.wa | grep ":" > ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.new 
+		  if (\`cat ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.new| wc -l\` != 0 ) then
+          echo "Oggetti modificati rispetto alla baseline \${GOOD_VERSION}" >> ${TEMP_FILE}
+          cat ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.new >> ${TEMP_FILE}
+          echo " " >> ${TEMP_FILE}
+#*************************************************************************
+# Nel caso la workarea differisca dalla baseline avviso la parte 
+# amministrativa.
+#*************************************************************************
+          ${LANCIA_MAIL} ERRORE 24 ${MODULO_NAME} \${PROGETTO}-\${VERSIONE}
+        endif
+        rm -f ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.new
+        rm -f ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.wa
+        rm -f ${PERSONAL_DIR}/\${PROJECT_NAME}.\${PROGETTO}.bas
+      else
+        ${LANCIA_MAIL} ERRORE 25 ${MODULO_NAME} \${PROGETTO}
+      endif
+    else
+      ${LANCIA_MAIL} ERRORE 26 ${MODULO_NAME} \${PROGETTO}
+    endif
+  end
+else
+  ${LANCIA_MAIL} ERRORE 20 ${MODULO_NAME}
+  rm -f ${BATCH_FILE}&
+  ccm stop
+  exit 0
+endif
+
+#*************************************************************************
+# Se non esiste DEST_DIR la creo.
+#*************************************************************************
+if !(-d ${DEST_DIR}) then
+  mkdir -p ${DEST_DIR}
+endif
+
+#*************************************************************************
+# Muovo il file TEMP_FILE in DEST_FILE
+#*************************************************************************
+mv ${TEMP_FILE} ${DEST_FILE}
+
+#*************************************************************************
+# Migro il file dentro Continuus
+#*************************************************************************
+ccm migrate -d ${DEST_BASE_DIR} -p ${MIGRATE_PROJECT}-${MIGRATE_VERSIONE} -st integrate
+
+#*************************************************************************
+# Elimino DEST_FILE
+#*************************************************************************
+if (-f ${DEST_FILE} ) then
+  rm -f ${DEST_FILE}
+endif
+
+#*************************************************************************
+# Fermo la sessione di Continuus.
+#*************************************************************************
+ccm stop
+
+EndOfInput
+
+source ${BATCH_FILE}

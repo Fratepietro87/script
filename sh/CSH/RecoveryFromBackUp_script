@@ -1,0 +1,139 @@
+#!/bin/csh
+#******************************************************************
+#                RecoveryFromBackUp_script
+#
+# Goal: Script per recuperare il database $1 dal suo pack $2
+#
+# Parameters: $1 Nome del database
+#             $2 Nome del packfile
+#
+# Author: Luca Brizzolara, June 2000
+#
+#******************************************************************
+
+#******************************************************************
+# Set Variabili globali
+#******************************************************************
+set DIR_SCRIPT = "/ccm_users/Script_Dir"
+set PARAMETERS_LST = "${DIR_SCRIPT}/Pack_lst"
+
+if ($#argv != 2) then
+  echo "USAGE: CM_Pack_script DB_NAME PackName"
+  exit 1
+endif
+set DB_NAME = $1
+set PACK_NAME = $2
+
+#******************************************************************
+# Verifico l'esistenza del file dei parametri
+#******************************************************************
+if !(-f ${PARAMETERS_LST}) then
+  echo "ERRORE: Il file ${PARAMETERS_LST} non esiste"
+  echo "Operazione annullata"
+  exit 1
+endif
+
+#******************************************************************
+# Verifico che il file dei parametri contenga le informazioni per
+# per il database ${DB_NAME}
+#******************************************************************
+if (`grep "\:${DB_NAME}\:" ${PARAMETERS_LST} |wc -l` != 1) then
+  echo "ERRORE:Il file ${PARAMETERS_LST} NON contiene informazioni per il database ${DB_NAME}"
+  echo "Operazione annullata"
+  exit 1
+endif
+
+if (`grep "\:${DB_NAME}\:" ${PARAMETERS_LST} |awk '{ print length($2) }'` == 0 ) then
+  echo "ERRORE:Il file ${PARAMETERS_LST} non contiene alcun valore per Pack_Dir di ${DB_NAME}"
+  echo "Operazione annullata"
+  exit 1
+endif
+set Pack_Dir = `grep "\:${DB_NAME}\:" ${PARAMETERS_LST} |awk '{ print $2 }'`
+
+if !(-d ${Pack_Dir}) then
+  echo "ERRORE:La directory per i pack-files ${Pack_Dir}"
+  echo "contenuta in ${PARAMETERS_LST}"
+  echo "per il database ${DB_NAME}, non esiste o non e' una directory"
+  echo "Operazione annullata"
+  exit 1
+endif
+
+if (`grep "\:${DB_NAME}\:" ${PARAMETERS_LST} |awk '{ print length($3) }'` == 0) then
+  echo "ERRORE:Il file ${PARAMETERS_LST} non contiene alcun valore per DatabasePath di ${DB_NAME}"
+  echo "Operazione annullata"
+  exit 1
+endif
+set DatabasePath = `grep "\:${DB_NAME}\:" ${PARAMETERS_LST} |awk '{ print $3 }'`
+
+if !(-d ${DatabasePath}) then
+  echo "ERRORE:La directory ${DatabasePath} che dovrebbe contenere il database non esiste"
+  echo "oppure non e' una directory. Controllare i parametri."
+  echo "Operazione annullata"
+  exit 1
+endif
+
+set DB_FULL_NAME = "${DatabasePath}/${DB_NAME}"
+if !(-d "${DB_FULL_NAME}/lib/notify") then
+  echo "ERRORE:Esiste la directory ${DatabasePath} ma il database ${DB_FULL_NAME} NON esiste."
+  echo "Verificare i parametri."
+  echo "Operazione annullata"
+  exit 1
+endif
+
+
+set PACK_FILE = "${Pack_Dir}/${PACK_NAME}"
+
+if !(-f ${PACK_FILE} ) then
+  echo "ERRORE: Il pack file ${PACK_FILE} non esiste o non si trova nella directory ${Pack_Dir}"
+  echo "Verificare i parametri."
+  echo "Operazione annullata"
+  exit 1
+endif
+echo "Check Dei Parametri OK"
+
+echo "Elimino il database ${DB_FULL_NAME}"
+ccmdb delete ${DB_FULL_NAME} -y
+
+echo "Unpack del database ${DB_FULL_NAME} da ${PACK_FILE}"
+ccmdb unpack ${PACK_FILE}  -to ${DB_FULL_NAME}
+
+
+set SCRIPT_DIR = "${DB_FULL_NAME}/lib/notify/Unix"
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr -d ${DB_FULL_NAME}`
+
+ccm query -t project
+ccm sync @
+
+ccm stop
+
+# Ricreo, se necessario, i link nella direcory Windows
+set CNF_DIR = "${DB_FULL_NAME}/lib/notify/cnf"
+set WIN_DIR = "${DB_FULL_NAME}/lib/notify/Windows"
+set link_list = "${CNF_DIR}/Win_script.lst"
+
+if (-f ${link_list} ) then
+  set numero_file = `cat ${link_list}|wc -l`
+  if (${numero_file} != 0 ) then
+    set i = 0
+    while ($i < ${numero_file})
+      @ i++
+      set nome_file = `head -n $i ${link_list}|tail -n 1`
+      if (-f ${WIN_DIR}/${nome_file} ) then
+	rm -f ${WIN_DIR}/${nome_file}
+      endif
+      if (-f ${SCRIPT_DIR}/${nome_file} ) then
+	echo "Creo link a ${SCRIPT_DIR}/${nome_file}"
+	ln -s ${SCRIPT_DIR}/${nome_file} ${WIN_DIR}/${nome_file}
+      else
+	echo "Non esiste ${SCRIPT_DIR}/${nome_file}"
+	echo "Controllare ${link_list}"
+      endif
+    end
+  else
+    echo "La lista ${link_list} esiste ma e' vuota"
+    echo "Nessun link creato"
+  endif
+endif
+
+exit 0

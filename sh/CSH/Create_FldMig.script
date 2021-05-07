@@ -1,0 +1,132 @@
+#!/bin/csh
+##*****************************************
+# Create_FldMig.script:			  *
+# Aggiunge il Folder ai Progetti di MIG   *
+# Autore: Luciano Giovannini 18/10/1999   *
+##*****************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+
+
+ccm status > ${CCM45_DB}/lib/notify/cnf/OutProj.lst 
+
+if !(`grep -c "Continuus/CM sessions for user ccm_root" ${CCM45_DB}/lib/notify/cnf/OutProj.lst`) then
+  echo .ERRORE.
+  echo ........ Utente ccm_root non collegato! 
+  echo ........ Attivare una sessione Continuus/CM:
+  echo ........ User:ccm_root,      Role:build_mgr.
+  echo .
+  exit 1
+endif         
+
+#############################################
+# Crea il Folder per lista di progetti oppure 
+# per il singolo progetto
+#############################################
+
+if ( $1 == "" ) then 
+  set Prj_lst  = `cat ${CCM45_DB}/lib/notify/cnf/Project.lst`
+  set prj_num  = `echo $#Prj_lst`
+  set i = 0
+else
+
+  if (`echo $1 | awk '{print length($1)}'` != 3) then
+    echo ""	
+    echo Acronimo $1 deve essere di 3 caratteri...!
+    exit 1
+  else	
+    set Prj_lst = $1
+    set prj_num = 1
+    set i = 0
+  endif
+endif   
+
+ccm set role build_mgr
+
+foreach k (${Prj_lst})
+
+#****************************************
+# Controllo esistenza Project e Folder  *
+#****************************************
+
+  echo "Controllo esistenza Project e Folder "$k
+  set find_prj = `ccm query -t project -name $k -v MIG`
+  set find_fld = `ccm query "cvtype='folder' and description='Consegne $k migrate in MIG'"`
+
+  if (`echo ${find_prj} | grep $k | wc -l` == 0) then
+    echo Attenzione il Progetto $k ..non esiste,non posso proseguire....!
+    echo ""
+    exit 1
+  endif
+
+  if !(`echo ${find_fld} | wc -l` != 0) then
+    echo ""   
+    echo "Creazione del folder $k di MIG"
+    echo ""
+
+
+#**************************
+# Creazione Folder di MIG *
+#**************************
+    echo Creazione del Folder di $k MIG
+    set folder_id = `ccm folder -cr -n "Consegne $k migrate in MIG " -w Build_Manager -us All -q`
+
+    ccm reconf_prop -add -folders ${folder_id} $k~MIG
+    ccm query -t folder -name ${folder_id}
+    set fld_attr = `ccm attr -c folder_subsys -t string -v $k~MIG @1`
+    echo ${fld_attr} 
+
+#################################################################
+# Crea il task ghost ed associa la dir in versione 1 del progetto
+#################################################################
+
+ccm set role ccm_admin
+
+    if ( ${folder_id} != "" ) then
+
+      set ver =  00001
+      set VER = `echo $k${ver} | awk '{print ($2)}'`
+      set task_fld = `ccm create_task -s "$k${ver}~MIG" -platform AIX-DB_FIL -subsystem $k | awk '{print ($2)}'`
+      
+      ccm query "cvtype='task' and task_subsys='$k' and task_synopsis='$k${ver}~MIG'"
+      ccm attr -c comitver -t string -v "${ver}" @1      
+      ccm attr -c cod_opzione -t string -v "NoAction" @1
+      ccm attr -c resolver -t string -v "cm_sesi" @1    
+      ccm attr -m status -v "completed" @1              
+      
+      ccm query "cvtype='dir' and name='$k' and version='1'"
+      ccm relate -n associated_cv -from task${task_fld}~1:task:probtrac -to  @1
+
+    endif
+
+########################################################################
+# Ricerca i task di migrazione del Project da inserire nel Folder di MIG
+########################################################################
+
+    set tname = `ccm query "cvtype='task' and task_subsys='$k' and creator='mig_sa'" | awk '{print ($2)}'`
+
+    set tnum = `echo $#tname`
+    set j = 0
+
+
+####################################
+# Inserisce i task nel Folder
+####################################
+
+    ccm set role build_mgr
+    ccm query "cvtype='folder' and folder_subsys='$k~MIG'"
+    ccm folder -modify -add_task ${task_fld} @1
+    
+    foreach cons_mig ( ${tname} )
+
+     ccm query "cvtype='folder' and folder_subsys='$k~MIG'"
+     ccm folder -modify -add_task ${cons_mig} @1
+
+    end
+  endif
+end
+
+ccm set role ccm_admin
+
+exit
+

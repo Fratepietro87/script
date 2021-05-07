@@ -1,0 +1,58 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    cpCCMflFIX_script
+#*
+#* Goal: copiare dalla WorkArea su fs i file da estrarre. Questa script
+#*       e' chiamata da una funzione xargs nel caso di una estrazione
+#*       del progetto FIX.
+#*
+#* Parameters: $1 SWD_ROOT (path di destinazione)
+#*             $2 WA_ROOT (path della wa)
+#*             $3 Progetto
+#*             $4 Ambiente (SQA o PRD)
+#*             $5.. elenco output xargs
+#*
+#* Author: Luca Brizzolara 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Setto le variabili di ambiente
+# **********************************************************************
+
+set root_dest = $1/FIX
+set wa = $2/$3~$4/$3
+
+# **********************************************************************
+# Controllo della struttura di filesystem
+# **********************************************************************
+
+shift
+
+while ($#argv != 0)
+  echo $1
+  set dest = `echo $1 | awk '{print substr($1,index($1,"/")+1,index($1,"~")-index($1,"/")-1)}'`
+  set sep = `echo ${dest} | awk '{print gsub("/","",$1)}'`
+  set rootsep = `echo ${root_dest} | awk '{print gsub("/","",$1)}'`
+  set i = ${rootsep} 
+  while ($i <= (${rootsep} + ${sep}))
+    @ i++
+    set cur_dir = `echo ${root_dest}/${dest} | cut -d/ -f1-$i`
+    if !(-d ${cur_dir}) then
+      echo mkdir ${cur_dir} 
+      mkdir ${cur_dir} 
+      chmod a+w ${cur_dir} 
+    endif
+  end
+  if (-f ${wa}/${dest}) then
+    if (`echo $1 | grep -i "README."` != '') then
+      echo skipp \[ ${wa}/${dest} \] 
+    else 
+      echo copio from \[ ${wa}/${dest} \] to \[ ${root_dest}/${dest} \]
+      cp -f ${wa}/${dest} ${root_dest}/${dest}
+      chmod a+w ${root_dest}/${dest}
+    endif
+  endif
+  shift
+end

@@ -1,0 +1,279 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* Eliminazione Consegna per COMIT
+#*
+#* Created: Brizzolara Luca July 1999
+#*        : Giovannini Luciano October 1999
+#***********************************************************************
+#* Parametri passati alla script:
+#* $1 cod_opzione: in funzione per il trigger; deve valere Elim.Consegna
+#* $2 task_subsys: nome del progetto a cui appartiene la consegna
+#* $3 comitver: nome della versione della consegna da cancellare
+#* $4 task_number: numero del task (per funzionamento da trigger)
+#* $5 task_synopsis: chi ha creato il task (per funzionamento da trigger)
+#* $6 creator: chi ha creato il task (per funzionamento da trigger)
+#* $7 resolver: chi ha il task assegnato (per funzionamento da trigger)
+#***********************************************************************
+#* Attenzione: E' stato creato appositamente un file di log per la
+#* delete delle consegne,vedi: '$CCM45_DB/lib/notify/log/DelMsg'  
+#***********************************************************************
+
+#************************************************************************
+#* Parte che implementa i controlli prima di procedere con l'eliminazione
+#* della consegna. Si devono controllare le seguenti cose:
+#* a) che la consegna esista;
+#* b) che la consegna sia migrata;
+#* c) che non ne sia stata migrata una successiva per lo stesso progetto;
+#* d) controlla che  non ci sia in corso una migrazione per questo prog.
+#* e) controlla che l'utente sia abilitato
+#* f) che la consegna stessa non sia stata gia' promossa in ambienti succ.
+#* g) che non sono stati completati i task dbl_sesi o prc_sesi
+#************************************************************************
+
+# **********************************************************************
+# Nel caso di azionamento da trigger controlla che debba effettivamente
+# partire la script.
+# **********************************************************************
+
+if ($1 != "Delete.Consegna" ) then
+	exit 0
+endif
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+ 
+set PRJ = $2
+set CONS = $2$3
+set VER = `echo ${CONS} | awk '{print substr($1,1,5)}'`
+set MIG_ROOT = "/usr/local/MIG_DB_FIL"
+set WA_ROOT  = "/usr/CONT_SRV/ccm_wa/DB_FIL"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+
+# **********************************************************************
+# Controllo che la consegna esista
+# **********************************************************************
+
+if ($2 == Any || !(-d $MIG_ROOT/${CONS})) then
+  echo "$MIG_ROOT/${CONS}" 
+  echo "MSG:La Consegna ${CONS} non esiste ..."
+  echo "MSG: " 
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+# **********************************************************************
+# Controllo che la consegna sia stata migrata
+# **********************************************************************
+
+if !(-f ${CCM45_DBlog}/Delta.${CONS}) then
+  echo "MSG:Consegna ${CONS} non e' stata migrata ..." 
+  echo "MSG: " 
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+# **********************************************************************
+# Controllo che non sia stata migrata una consegna successiva 
+# **********************************************************************
+
+set fnd = `ls -r ${CCM45_DBlog}/Delta.${PRJ}* |grep -v CSU|grep -v SQA|grep -v PRD| awk -F. '{print substr($2,4,5)}'`
+set fnum = `echo $#fnd`
+set i = 0
+
+while ($i < ${fnum})
+  @ i++
+  if (`echo $fnd[$i]` > $3) then
+    echo "MSG:Cancellazione di ${CONS} NON consentita."
+    echo "MSG:Esiste una consegna migrata con versione"
+    echo "MSG:piu' alta. "
+    echo "MSG: "
+    echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+    echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+    goto bad_task
+  endif
+end
+
+# **********************************************************************
+# Controllo che una migrazione di questo progetto sia ancora in corso 
+# **********************************************************************
+
+if (-f ${CCM45_DBlog}/Mig.${PRJ}.LOCK) then
+  echo "MSG:ATTENZIONE è in corso una migrazione di ${PRJ}."
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+# **********************************************************************
+# Controllo che l'utente sia abilitato alla cancellazione
+# **********************************************************************
+
+if ($6 != ccm_root ) then
+  echo "MSG:$6 NON e' abilitato a cancellare delle consegne."
+  echo "MSG:  " 
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg 
+  goto bad_task
+endif
+
+# **********************************************************************
+# Controllo che la consegna non sia gia' stata promossa in altri ambienti
+# **********************************************************************
+
+if (`cat ${CCM45_DBlog}/Delta.${CONS}|grep FOLDER_UPDATE|wc -l` > 0) then
+  echo "MSG:La consegna e' gia' stata promossa in ambienti successivi."
+  echo "MSG:  " 
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg 
+  goto bad_task
+endif
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}`
+# **********************************************************************
+# Individuazione dei task associati alla consegna e determinazione del
+# loro stato. Devo ancora cercare i task diversi da quello di migrazione.
+# **********************************************************************
+
+if ( `ccm query "cvtype='task' and task_subsys='${PRJ}' and comitver='$3' and resolver='chk_sa'" |grep -c task` ) then
+  set ntask_cons = `ccm query "cvtype='task' and task_subsys='${PRJ}' and comitver='$3'" |awk '{print $2}'`
+echo " task della consegna: ${ntask_cons}" >> ${CCM45_DBlog}/DelMsg
+ 
+  set ntask_mig = `ccm query "cvtype='task' and task_subsys='${PRJ}' and comitver='$3' and resolver='chk_sa'" |awk '{print $2}'`
+  set tsk_dbl = `ccm query "cvtype='task' and task_subsys='${PRJ}' and comitver='$3' and status='completed'" | grep dbl_sesi` 
+  set tsk_prc = `ccm query "cvtype='task' and task_subsys='${PRJ}' and comitver='$3' and status='completed'" | grep prc_sesi` 
+     
+else
+  ccm stop
+  echo "MSG:Non esiste un task di migrazione ${CONS} associato alla consegna."
+  echo "MSG:  " 
+  echo "MSG:Operazione Annullata. Il Task$4 sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Task$4 Deleted" >>&/$CCM45_DBlog/ErrMsg 
+  goto bad_task
+endif
+#######################################################
+# Verifica condizione task per effettuare la delete   #
+# Controllo stato task assegnati a prc_sesi e dbl_sesi#
+#######################################################
+if ( `echo ${tsk_dbl} | awk '{print ($3)}'` == "completed" ) then
+  ccm stop
+  set user_rsp = `echo ${tsk_dbl} |awk '{print ($4)}'` 
+  echo "MSG:ATTENZIONE: la consegna ${CONS} non può essere cancellata perchè il task assegnato a" 
+  echo "MSG: ${user_rsp} e' stato completato .." 
+  goto bad_task
+endif
+
+if ( `echo ${tsk_prc} | awk '{print ($3)}'` == "completed" ) then
+  ccm stop
+  set user_rsp = `echo ${tsk_prc} |awk '{print ($4)}'` 
+  echo "MSG:ATTENZIONE: la consegna ${CONS} non può essere cancellata perchè il task assegnato a" 
+  echo "MSG: ${user_rsp} e' stato completato .." 
+  goto bad_task
+endif
+
+ccm stop
+goto good_tsk
+
+# **********************************************************************
+# Check is failed. Remove current task (CCM45 Session must be external)
+# **********************************************************************
+bad_task:
+
+echo "Non è possibile cancellare la consegna.."
+
+cat > ${CCM45_DBlog}/tsk$4<<!
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+ccm del task$4~1:task:probtrac
+ccm stop
+rm ${CCM45_DBlog}/tsk$4 &
+!
+source ${CCM45_DBlog}/tsk$4 &
+exit 0
+
+###################################
+#La consegna può essere cancellata# 
+###################################
+good_tsk:
+
+echo "MSG: Cancellazione ${CONS} in corso....." 
+echo "MSG: Cancellazione ${CONS} in corso....." >> ${CCM45_DBlog}/DelMsg
+        
+cat > ${CCM45_DBlog}/DelCons$2$3 <<EndOfInput1
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+ccm set role ccm_admin
+
+# **********************************************************************
+# Individuazione degli oggetti pertinenti la consegna
+# 1) rimozione oggetti dal database
+# 2) sync della wa
+# **********************************************************************
+
+ccm query "is_associated_object_of('task${ntask_mig}~1:task:probtrac')" -u -f "%objectname" > ${CCM45_DBlog}/lista_oggetti
+
+# *****************************************************************************
+# Suddivisione degli oggetti da cancellare: se in versione = 1 -->lista_nuovi *
+#                                           se in versione > 1 -->lista_vecchi* 
+# *****************************************************************************
+cat ${CCM45_DBlog}/lista_oggetti |grep -v "~1:" |grep -v ":dir:" > ${CCM45_DBlog}/lista_vecchi
+cat ${CCM45_DBlog}/lista_oggetti |grep -v "~1:" |grep ":dir:" >> ${CCM45_DBlog}/lista_vecchi
+cat ${CCM45_DBlog}/lista_oggetti |grep "~1:" |grep -v ":dir:" > ${CCM45_DBlog}/lista_nuovi
+cat ${CCM45_DBlog}/lista_oggetti |grep "~1:" |grep ":dir:" >> ${CCM45_DBlog}/lista_nuovi
+
+set obj_unuse = \`cat ${CCM45_DBlog}/lista_vecchi| awk -F~ '{print (\$1)}'\`
+set obj_del = \`cat ${CCM45_DBlog}/lista_nuovi| awk -F~ '{print (\$1)}'\`
+
+# *****************************************************************************
+# Unuse delete e replace degli oggetti contenuti in lista_vecchi 
+# *****************************************************************************
+
+foreach objun (\${obj_unuse})
+ set unus_obj = \`ccm finduse -name \${objun} |grep @${PRJ}~MIG\`
+ ccm unuse -d -r \${unus_obj} >> ${CCM45_DBlog}/DelMsg
+end
+# *****************************************************************************
+# Delete degli oggetti contenuti in lista_nuovi
+# *****************************************************************************
+
+foreach objdl (\${obj_del})
+ ccm query "name='\${objdl}' and status='integrate' and project='${PRJ}'" >> ${CCM45_DBlog}/DelMsg
+ ccm del @1 >> ${CCM45_DBlog}/DelMsg
+end
+
+# **********************************************************************
+# Cancello i task associati alla consegna
+# **********************************************************************
+
+foreach tsk_d (${ntask_cons})
+ ccm query -t task -n task\${tsk_d}
+   if ( "\${tsk_d}" != "$4" ) then
+    ccm del @1
+    echo "Delete del task \${tsk_d}" >> ${CCM45_DBlog}/DelMsg
+  endif
+end
+
+###########################################
+# Sync del progetto                       #
+###########################################
+
+ccm sync -p ${PRJ}~MIG
+
+echo "sync. del progetto" >> ${CCM45_DBlog}/DelMsg
+
+###########################################
+# Cancello File Delta.Consegna
+###########################################
+
+rm ${CCM45_DBlog}/Delta.${CONS} 
+echo "Rimosso ${CCM45_DBlog}/Delta.${CONS} " >> ${CCM45_DBlog}/DelMsg
+ccm stop
+
+rm  ${CCM45_DBlog}/DelCons$2$3
+EndOfInput1
+
+source ${CCM45_DBlog}/DelCons$2$3 &

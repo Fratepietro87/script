@@ -1,0 +1,44 @@
+#!/bin/csh
+#***********************************************************************
+#*                       CheckConsegnaPatchBaseline
+#* 
+#* Goal: Controllare che la consegna indicata non esista nella directory
+#*       MIG_ROOT, e che tale consegna non sia gia' stata migrata (non
+#*       ci deve essere il file Delta.Consegna nella directory di log).
+#*       Nel caso una consegna esista (o non sia stato selezionato
+#*       il progetto), restituisco 1; nel caso la consegna sia stata 
+#*       gia' migrata, restituisco 2.
+#*
+#* Parametri passati:$1 MIG_ROOT (Directory dove si trovano le consegne)
+#*                   $2 LOG_DIR (dove sono i file Delta.Consegna)
+#*                   $3 Nome del progetto
+#*                   $4 Numero della consegna
+#* 
+#* Autore: Luca Brizzolara - Feb 2000
+#* 
+#***********************************************************************
+
+set MIG_ROOT = $1
+set LOG_DIR = $2
+set PROGETTO = $3
+set COMITVER = $4
+
+
+#***********************************************************************
+# Controllo l'esistenza della consegna.
+#***********************************************************************
+if ( -d ${MIG_ROOT}/${PROGETTO}${COMITVER} ) then
+  exit 1
+endif
+
+#***********************************************************************
+# Controllo che la consegna non sia gia' stata migrata.
+#***********************************************************************
+if ( -f ${LOG_DIR}/Delta.${PROGETTO}${COMITVER} ) then
+  exit 2
+endif
+
+#***********************************************************************
+# I controlli hanno dato esito positivo.
+#***********************************************************************
+exit 0

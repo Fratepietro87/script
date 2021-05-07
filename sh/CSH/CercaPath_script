@@ -1,0 +1,74 @@
+#!/bin/csh
+########################################################################
+#
+#                CercaPath_script
+#
+# Goal: Ricercare il PATH del file OBJ_NAME
+#
+# Parameters: $1 Project_Name
+#             $2 Object Name
+#             $3 Object Version
+#             $4 Owner
+#             $5 DB_NAME
+#             $6 LOG_FILE
+#
+# Author: Luca Brizzolara, Jul 2001
+#
+########################################################################
+
+#**********************************************************************
+# Definizione delle variabili
+#**********************************************************************
+set OBJ_NAME = $1
+set OBJ_VERSION = $2
+set TYPE = $3
+set ISTANCE = $4
+set PROJECT_NAME = $5
+set CCM51_DB = "/tst1/ccm_databases/SELESTA"
+set LOG_DIR = "${CCM51_DB}/lib/notify/log"
+set LOG_FILE = "${LOG_DIR}/${OBJ_NAME}${OBJ_VERSION}.${ISTANCE}_IDENT"
+set BATCH_FILE = "${LOG_DIR}/${OBJ_NAME}${OBJ_VERSION}.${ISTANCE}_BAT"
+
+set LOCAL_CNF_PATH = "${CCM51_DB}/lib/notify/cnf"
+
+#*****************************************************
+# Verifico se il progetto necessita dell'ident
+#*****************************************************
+if (`grep ":${PROJECT_NAME}:" ${LOCAL_CNF_PATH}/ListaProj_ident |wc -l` == 0 ) then
+  exit 0
+endif
+
+cat > ${BATCH_FILE}<<EndOfInput
+#**********************************************************************
+# Start sessione di Continuus per l'utente che sta lavorando
+#**********************************************************************
+sleep 2
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin -d ${CCM51_DB}\`
+
+#**********************************************************************
+# Ricerco il progetto in cui c'e' l-oggetto (e' la wa dell'utente)
+# e ne trovo il wa_path
+#**********************************************************************
+ccm query "cvtype='project' and name='${PROJECT_NAME}' and has_member('${OBJ_NAME}-${OBJ_VERSION}:${TYPE}:${ISTANCE}')"
+set WA_PATH = \`ccm attr -s wa_path @1\`
+
+#**********************************************************************
+# Cerco il path relativo del file nel progetto
+#**********************************************************************
+set NAME = \`ccm attr -s name @1\`
+set VERSION = \`ccm attr -s version @1\`
+#set RELATIVE_PATH = \`ccm finduse -working_proj ${OBJ_NAME}-${OBJ_VERSION}:${TYPE}:${ISTANCE}|grep "\${NAME}-\${VERSION}"|awk -F@ '{ print \$1 }' |nawk -F"${OBJ_NAME}\-${OBJ_VERSION}" '{ print \$1 }'\`
+set RELATIVE_PATH = \`ccm finduse ${OBJ_NAME}-${OBJ_VERSION}:${TYPE}:${ISTANCE}|grep "\${NAME}-\${VERSION}"|awk -F@ '{ print \$1 }' |nawk -F"${OBJ_NAME}\-${OBJ_VERSION}" '{ print \$1 }'\`
+
+#**********************************************************************
+# Restituisco nel file il path dell'oggetto.
+#**********************************************************************
+#set FILE_PATH = "\${WA_PATH}/\${RELATIVE_PATH}${PROJECT_NAME}"
+set FILE_PATH = "\${WA_PATH}/\${RELATIVE_PATH}"
+echo \${FILE_PATH} > ${LOG_FILE}
+
+ccm stop
+rm -f ${BATCH_FILE}
+EndOfInput
+
+source ${BATCH_FILE}&

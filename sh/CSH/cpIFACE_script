@@ -1,0 +1,66 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    cpIFACE_script
+#*
+#* Goal: copiare le interfacce eventualmente presenti per realizzare 
+#*       un tar separato.
+#*
+#*
+#* Author: Brizzolara Luca Dec 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set SWD_ROOT = $1
+set ambiente = $2
+set Elenco_Interfacce = $3
+set IFACE_DIR = $4
+set LOG_DIR = "/usr/CONT_SRV/ccmdb/DB_GPM/lib/notify/log"
+set LISTA_TEMP = "${LOG_DIR}/ListaShort"
+
+# **********************************************************************
+# File system structure check
+# **********************************************************************
+
+shift
+shift
+shift
+shift
+
+while ($#argv != 0)
+  echo $1
+  set nome_file = `echo $1|awk -F/ '{ n=split($0,A);print A[n] }'`
+  if (`grep ${nome_file} ${Elenco_Interfacce}|wc -l` != 0 ) then
+    grep ${nome_file} ${Elenco_Interfacce} > ${LISTA_TEMP}
+    set Numero_linee = `cat  ${LISTA_TEMP} |wc -l`
+    set i = 0
+    while ($i < ${Numero_linee})
+      @ i++ 
+      set elemento = `head -n $i ${LISTA_TEMP}|tail -n 1`
+      if ( ${elemento} == ${nome_file} ) then
+        set root_dest = "${IFACE_DIR}/${ambiente}"
+        set sep = `echo $1 | awk '{print gsub("/","",$1)}'`
+        set rootsep = `echo ${root_dest} | awk '{print gsub("/","",$1)}'`
+        set i = ${rootsep} 
+        while ($i <= (${rootsep} + ${sep}))
+          @ i++
+          set cur_dir = `echo ${root_dest}/$1 | cut -d/ -f1-$i`
+          if !(-d ${cur_dir}) then
+            echo mkdir ${cur_dir} 
+            mkdir ${cur_dir} 
+            chmod a+w ${cur_dir} 
+          endif
+        end
+        echo "sposto \[ ${SWD_ROOT}/${ambiente}/$1 \] in \[ ${IFACE_DIR}/${ambiente}/$1 \]"
+        mv ${SWD_ROOT}/${ambiente}/$1 ${IFACE_DIR}/${ambiente}/$1
+        set i = ${Numero_linee}
+      endif
+    end
+    rm ${LISTA_TEMP}
+  endif
+  shift
+end

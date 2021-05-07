@@ -1,0 +1,136 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* Migration End IBM AIX CSHELL Script for COMIT Consegne
+#*
+#* Parametri passati: $1 cod_opzione
+#*                    $2 task_subsys
+#*                    $3 comitver
+#*                    $4 task_number
+#*                    $5 task_synopsis
+#*                    $6 creator
+#*                    $7 resolver
+#*                    $8 prerequisiti
+#*                    $9 corequisiti
+#*
+#* Author: Cavana Carlo 1998
+#*
+#***********************************************************************
+
+# **********************************************************************
+# OjbSize Calculation for objsize attrib.
+# **********************************************************************
+
+set CCM45_DB    = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+
+${CCM45_DB}/lib/notify/Unix/SizeOfObjTsk $4 &
+
+# **********************************************************************
+# Actions check
+# **********************************************************************
+
+if !(($1 == "Migraz.Consegna" && $6 == mig_sa) || ($1 == "CheckForNextEnv" && ($7 == chk_csu || $7 == chk_sqa || $7 == cm_sesi ))) then
+  exit 0
+endif
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set REL = $2$3
+set VER = `echo $REL | awk '{print substr($1,1,5)}'`
+set REBOL_WORK = "/usr/CONT_SRV/rebol/script/data"
+
+# **********************************************************************
+# Misc check
+# **********************************************************************
+
+if ( `cat ${CCM45_DBlog}/Delta.$2$3 | grep -c -E "DB2_FLAG|CMD_FLAG"` ) then
+  setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}`
+  if ($1 == "Migraz.Consegna") then
+    if (`ccm query "cvtype='task' and task_subsys='$2' and comitver='$3' and resolver='dba_sa' and (status='task_assigned' or status='registered')" | grep -c task`) then
+      ccm stop
+      echo "MSG:   "
+      echo "MSG: Consegna $2$3 NON completata da dba_sa, Check In Task $4 non eseguito." 
+      echo "MSG:   "
+      exit 1
+    endif
+  else
+    if (`ccm query "cvtype='task' and task_subsys='$2' and comitver='$3' and (resolver='dbl_sesi' or resolver='prc_sesi') and (status='task_assigned' or status='registered')" | grep -c task`) then
+      ccm stop
+      echo "MSG:   "
+      echo "MSG: dbl_sesi e/o prc_sesi non hanno ancora completato il loro task."
+      echo "MSG: Consegna $2$3 NON completata, Check In Task $4 non eseguito." 
+      echo "MSG:   "
+      exit 1
+    else
+      ccm stop
+# Inserimento mail con REBOL
+      if ($7 != cm_sesi) then
+        set chkenv = `echo $7 | awk -F"_" '{print toupper($2)}'`
+        echo "$4-$2$3" >> ${REBOL_WORK}/TestOKsend.${chkenv}
+      endif
+      exit 0
+    endif
+  endif
+  ccm stop
+else
+  if (($7 != cm_sesi)&&($7 != mig_sa)) then
+    set chkenv = `echo $7 | awk -F"_" '{print toupper($2)}'`
+    echo "$4-$2$3" >> ${REBOL_WORK}/TestOKsend.${chkenv}
+  endif
+endif
+
+# **********************************************************************
+# Check is OK. (CCM45 Session must be external)
+# **********************************************************************
+
+cat > ${CCM45_DBlog}/CloseMig.$2 <<EndOfInput1
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+
+# **********************************************************************
+# Check DB2 in order to create a task.
+# **********************************************************************
+
+if ( \`cat ${CCM45_DBlog}/Delta.$2$3 | grep -c DB2_FLAG\` ) then
+  set N = \`ccm create_task -s "Attività DBL. Check e/o Modifica degli oggetti DB2 di $2$3~MIG" -r dbl_sesi -platform AIX-DB_FIL -release ${VER} -subsystem $2 | awk '{print (\$2)}'\`
+  ccm query -t task -name task\$N
+  ccm attr -c comitver -t string -v $3 @1
+  ccm attr -c task_description -t string -v "Task di riferimento: task$4" @1
+endif
+# End Check DB2 
+
+# **********************************************************************
+# Check CMD in order to create a task.
+# **********************************************************************
+
+if ( \`cat ${CCM45_DBlog}/Delta.$2$3 | grep -c CMD_FLAG\` ) then
+  set N = \`ccm create_task -s "Attività PRC. Check e/o Modifica degli oggetti CMD di $2$3~MIG" -r prc_sesi -platform AIX-DB_FIL -release ${VER} -subsystem $2 | awk '{print (\$2)}'\`
+  ccm query -t task -name task\$N
+  ccm attr -c comitver -t string -v $3 @1
+  ccm attr -c task_description -t string -v "Task di riferimento: task$4" @1
+# **********************************************************************
+# Avviso tramite mail dell'apertura del task.
+# **********************************************************************
+  setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+  /usr/CONT_SRV/rebol/script/mailer.r emailADV MIG prc_sesi \${N} $2$3 >> /usr/CONT_SRV/rebol/log/mail_log
+endif
+# End Check CMD 
+
+ccm stop
+rm ${CCM45_DBlog}/CloseMig.$2 &
+
+# **********************************************************************
+# End to build the Script.
+# **********************************************************************
+
+EndOfInput1
+
+# **********************************************************************
+# Run the Script.
+# **********************************************************************
+
+source ${CCM45_DBlog}/CloseMig.$2 &
+

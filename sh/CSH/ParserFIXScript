@@ -1,0 +1,134 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     ftpFIX_script
+#*
+#* Goal: creare il tar del software estratto, preparare una script per
+#*       fare l'ftp del tar ed eventualmente di altre script verso la
+#*       destinazione.
+#* 
+#* Parametri passati: $1 SWD_ROOT/FIX
+#*
+#* Author: Brizzolara Luca Nov 1999
+#*
+#***********************************************************************
+
+#**********************************************************************
+#* Definizione delle variabili
+#**********************************************************************
+
+set SWD_ROOT = $1
+set AMBIENTE = FIX
+set CCM45 = "/usr/CONT_SRV/ccm45"
+set CCM45_DB "/usr/CONT_SRV/ccmdb/DB_GPM"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CNF_DIR = "${CCM45_DB}/lib/notify/cnf"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set FTP_DIR = "${EXE_DIR}/FTP"
+set TAR_DIR = "/usr/CONT_SRV/SWD_TAR"
+set INIFILE = "${EXE_DIR}/ftp.ini"
+set RESPONSE_FILE = "${SWD_ROOT}/response.txt"
+
+
+#**********************************************************************
+# Leggo le variabili dal file ini (vediamo quali e se necessario)
+#**********************************************************************
+if ( ! -r "${INIFILE}" )  then
+  echo "MSG: non posso leggere il file ${INIFILE}" >> ${RESPONSE_FILE}
+  exit 14
+endif
+
+if (`cat ${INIFILE} |grep CONSEGNA_FILE_PREFIX|wc -l` != 0) then
+  set CONSEGNA_FILE_PREFIX = `cat ${INIFILE} |grep CONSEGNA_FILE_PREFIX |awk -F= '{ print $2 }'`
+else
+  echo "MSG:la variabile $CONSEGNA_FILE_PREFIX non e' presente nel file ini." >> ${RESPONSE_FILE}
+  exit 15
+endif
+
+
+#**********************************************************************
+# Ricavo il numero dell'estrazione
+#**********************************************************************
+set CONSEGNA_FILE = "${CNF_DIR}/consegna.${AMBIENTE}"
+if ( ! -r "${CONSEGNA_FILE}" )  then
+  echo "MSG: non posso leggere il file ${CONSEGNA_FILE}" >> ${RESPONSE_FILE}
+  exit 11
+endif
+
+set CONSEGNA_FILE_BACKUP = ${CONSEGNA_FILE}.backup
+mv ${CONSEGNA_FILE} ${CONSEGNA_FILE_BACKUP}
+if (${status}) then
+  echo "Non posso rinominare il file CONSEGNA_FILE." >> ${RESPONSE_FILE}
+  echo "Un altro processo potrebbe averlo in uso." >> ${RESPONSE_FILE}
+  exit 12
+endif
+
+#**********************************************************************
+# Setto il nome del file che scrivero' per fare ftp
+#**********************************************************************
+set CONSEGNA_AMBIENTE = "FIX"
+
+set CONSEGNA = ${CONSEGNA_AMBIENTE}${CONSEGNA_NUM}
+set FTP_FILE = ${FTP_DIR}/${CONSEGNA}.ftp
+set TAR_FILE = ${TAR_DIR}/${CONSEGNA}
+
+#**********************************************************************
+# Creo il tar con il software estratto
+#**********************************************************************
+${EXE_DIR}/CreoTar ${  ???? vedo quali parametri passare
+if (${status}) then
+  echo "Fallita la creazione del tar." >> ${RESPONSE_FILE}
+  exit 20
+endif
+
+
+#**********************************************************************
+# Devo distribuire sia per SQA (via cp) che per PRD (via ftp)
+#**********************************************************************
+if ($2 == SQA ) then
+  set DEST_DIR = 
+else
+
+#***********************************************************************
+# Inizio a produrre il file che poi sara' lanciato per fare l'ftp 
+#***********************************************************************
+
+cat > ${FTP_FILE} << EndOfInput1
+#!/bin/csh
+#***********************************************************************
+# Realizzo l'ftp del tar verso la macchina di destinazione
+#***********************************************************************
+if (-f ${CCM45}/.netrc) then
+  rm ${CCM45}/.netrc
+endif
+${EXE_DIR}/Createnetrc_script PRD ${CONSEGNA} ${SWD_ROOT} ${TAR_DIR}
+
+set Ip = \`cat ${EXE_DIR}/LoginPasswd | grep PRD | awk '{print \$2}'\`
+
+#	***************************************
+#	Set ccm_root home directory
+#	***************************************
+set HomeDir = \${home}
+set home = "/usr/CONT_SRV/ccm45"
+
+ftp -i \${Ip} &
+
+sleep 2
+set FERMO = 0
+while (\$FERMO == 0)
+  if (\`ps -ef |grep ftp |grep -v grep |grep -v sc |grep -v man| wc -l\` == 0) then
+    set FERMO = 1
+  else
+    sleep 2
+  endif
+end
+
+set home = \${HomeDir}
+
+EndOfInput1
+
+chmod 744 ${FTP_FILE}
+${FTP_FILE}
+
+exit 0
+

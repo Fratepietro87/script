@@ -1,0 +1,847 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                       DoMig_Fix
+#*
+#*
+#* Goal: lo scopo e' di migrare all'interno di CONTINUUS software per SISO
+#*       consegnato da Datamat gia' compilato in ambiente FIX. 
+#*
+#* Parameters: $1 cod_opzione
+#*             $2 task_subsys
+#*             $3 comitver
+#*             $4 task_number
+#*             $5 task_synopsis
+#*             $6 creator
+#*             $7 resolver
+#*             $8 prerequisiti
+#*             $9 corequisiti
+#*
+#* Created by: Luca Brizzolara, Luciano Giovannini Apr 2000
+#*
+#***********************************************************************
+
+#***********************************************************************
+# Controllo dei parametri di ingresso per l'esecuzione da trigger.
+#***********************************************************************
+
+if ($1 != "Migraz.Fix") then
+  exit 0
+endif
+
+if ($2 == "WKS") then
+  exit 0
+endif
+#***********************************************************************
+# Settaggio variabili di ambiente.
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set WA_ROOT = "/usr/CONT_SRV/ccm_wa/DB_GPM"
+set MIG_ROOT = "/usr/CONT_SRV/MIG_DB_GPM"
+set PROGETTO = $2
+set COMITVER = $3
+set Ntask = $4
+set VER = `echo ${PROGETTO}${COMITVER} | awk '{print substr($1,1,5)}'`
+set PROJECT_DIR = "${SCRIPT_DIR}/${PROGETTO}"
+set COMMON_DIR = "${SCRIPT_DIR}/COMMON"
+set DTM_PROJECTS = "SQL FMX FRM SHE SIS"
+#***********************************************************************
+# Inizio sezione di controlli
+#***********************************************************************
+
+# ************************************************************
+# Controllo che l'utente sia quello corretto.
+# ************************************************************
+if ($6 != mig_dtm ) then
+  echo "MSG:$6 non abilitato a migrare del SW."
+  echo "MSG:  "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo che la consegna esista e che non sia gia' stata migrata.
+#***********************************************************************
+
+${COMMON_DIR}/CheckConsegna ${MIG_ROOT} ${CCM45_DBlog} ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La consegna ${PROGETTO}${COMITVER} non esiste"
+  else
+    echo "MSG:La consegna ${PROGETTO}${COMITVER} e' gia' stata migrata"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo cha la comitver sia corretta (totalmente numerica). Non
+# controllo l'incrementalita'.
+# I codici di ritorno sono:
+# - 0 per COMITVER ok;
+# - 1 per COMITVER non lunga 5 caratteri
+# - 2 per COMITVER formalmente non corretta.
+#***********************************************************************
+${PROJECT_DIR}/CheckComitverNumerica ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La comitver inserita non e' di 5 caratteri"
+  else
+    echo "MSG:La comitver inserita ha un formato non conforme alle regole"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo che esista e sia leggibile la tabella da utilizzare poi
+# nel CheckAlberaturaConsegna. I codici di ritorno sono:
+# - 0 tutto ok
+# - 1 non esiste la tabella
+# - 2 la tabella non e' leggibile
+# In ogni caso in ${TempFileParametri} viene restituito il nome
+# della tabella.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+cat /dev/null > ${TempFileParametri}
+
+${PROJECT_DIR}/CheckTabella ${PROJECT_DIR} ${TempFileParametri}
+set ESITO = ${status}
+
+set NomeTabella = `cat ${TempFileParametri}|head -n 1`
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella lettura dei dati"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La tabella ${NomeTabella} non esiste"
+  else
+    echo "MSG:La tabella ${NomeTabella} esiste,"
+    echo "ma ccm_root non ha su di essa i permessi di lettura"
+  endif
+  echo "MSG: "
+  echo "MSG:Contattare il CM per la risoluzione del problema"
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm ${TempFileParametri}
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo di alberatura per la consegna; i codici di ritorno sono:
+# - 0 per consegna conforme per struttura alle regole;
+# - 1 se manca una variabile nella tabella
+# - 2 per consegna con alberatura non corretta.
+# Nel caso di variabile mancante in tabella, restituisce il nome di
+# tale variabile in TempFileParametri. Nel caso di alberatura non corretta
+# restituisce in TempFileParametri il nome del file o directory non
+# conforme alle regole. La script esce al primo errore riscontrato.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+cat /dev/null > ${TempFileParametri}
+
+${PROJECT_DIR}/CheckAlberaturaConsegna ${MIG_ROOT} ${TempFileParametri} ${PROGETTO} ${COMITVER} ${PROJECT_DIR} ${NomeTabella}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  set ElementoErrato = `cat ${TempFileParametri}`
+  echo "MSG:Errore nella struttura della consegna"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La variabile ${ElementoErrato} non e' definita"
+  else
+    echo "MSG:Il file o directory ${ElementoErrato}"
+    echo "MSG:ha un path errato"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm ${TempFileParametri}
+  goto bad_task
+endif
+
+rm ${TempFileParametri}
+
+#***********************************************************************
+# Verifico che non ci siano troppe migrazioni in corso (limito a tre il
+# numero di migrazioni contemporanee per ragioni di efficienza).
+# Verifico poi, che non sia in corso un'altra migrazione che coinvolge
+# lo stesso progetto.
+# Codici ritornati:
+# 0 - tutto ok
+# 1 - troppe migrazioni.
+# 2 - gia' in corso una migrazione di questo progetto.
+#***********************************************************************
+
+${COMMON_DIR}/CheckNumMigrazioni ${CCM45_DBlog} ${PROGETTO}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella procedura"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:sono in corso troppe migrazioni. Riprovare piu' tardi"
+  else
+    echo "MSG:E' gia' in corso una migrazione per ${PROGETTO}"
+  endif
+  echo "MSG:Se il problema persiste, contattare ufficio CM"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Verifico la correttezza dei prerequisiti; i codici di ritorno sono:
+# - 0 se e' tutto ok (in ${TempFileParametri} trovo la lista dei
+#     prerequisiti che sono stati inseriti, se ce ne sono)
+# - 1 se la lista non e' formalmente corretta
+# - 2 se uno dei prerequisiti non e' stato ancora migrato.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+set LogFileErrori = "${CCM45_DBlog}/LogFileErrori"
+cat /dev/null > ${TempFileParametri}
+cat /dev/null > ${LogFileErrori}
+
+${COMMON_DIR}/CheckPrereq_Mig_script ${LogFileErrori} ${PROGETTO} ${COMITVER} ${TempFileParametri} $8
+set ESITO = ${status}
+
+if (${ESITO} == 0) then
+  if (`cat ${TempFileParametri}|wc -l` != 0 ) then
+    set NumPrereq = `cat ${TempFileParametri}|wc -l`
+    set i = 0
+    while ($i < ${NumPrereq} )
+      @ i++
+      set PrereqName = `head -n $i ${TempFileParametri}|tail -n 1`
+      echo "MSG:Registrato Prerequisito: ${PrereqName}"
+    end
+  endif
+else
+  if (${ESITO} == 2) then
+    set prereq_error = `cat ${LogFileErrori}`
+    echo "MSG:Errore Prerequisito. ${prereq_error} Non Migrato"
+  else
+    echo "MSG:Anomalia nella lista prerequisiti"
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${LogFileErrori} ${TempFileParametri}
+  goto bad_task
+endif
+
+rm -f ${LogFileErrori} ${TempFileParametri}
+
+
+#***********************************************************************
+# Verifico la correttezza dei corequisiti; i codici di ritorno sono:
+# - 0 se e' tutto ok (in ${TempFileParametri} trovo la lista dei corequisiti
+#     che sono stati inseriti, se ce ne sono)
+# - 1 se la lista non e' formalmente corretta
+# - 2 se uno dei prerequisiti non ha la consegna migranda come
+#     corequisito.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+set LogFileErrori = "${CCM45_DBlog}/LogFileErrori"
+cat /dev/null > ${TempFileParametri}
+cat /dev/null > ${LogFileErrori}
+
+${COMMON_DIR}/CheckCoreq_Mig_script ${LogFileErrori} ${PROGETTO} ${COMITVER} ${TempFileParametri} $9
+set ESITO = ${status}
+
+if (${ESITO} == 0) then
+  if (`cat ${TempFileParametri}|wc -l` != 0) then
+    set NumCoreq = `cat ${TempFileParametri}|wc -l`
+    set i = 0
+    while ($i < ${NumCoreq})
+      @ i++
+      set CoReqName = `head -n $i ${TempFileParametri}|tail -n 1`
+      echo "MSG:Registrato Prerequisito: ${CoReqName}"
+    end
+  endif
+else
+  if (${ESITO} == 2) then
+    set coreq_error = `cat ${LogFileErrori}`
+    echo "MSG:Errore Corequisito: $coreq_error"
+    echo "MSG:$coreq_error non ha ${PROGETTO}${COMITVER} come COREQUISITO"
+  else
+    echo "MSG:Anomalia  nella lista dei Corequisiti"
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${TempFileParametri} ${LogFileErrori}
+  goto bad_task
+endif
+
+rm -f ${TempFileParametri} ${LogFileErrori}
+
+
+#***********************************************************************
+# I controlli sono stati tutti separati. Passo alla migrazione.
+#***********************************************************************
+goto good_tsk
+
+#***********************************************************************
+# Fallito i controlli. Cancello il task con sessione di background.
+#***********************************************************************
+bad_task:
+
+cat > ${CCM45_DBlog}/tsk${Ntask} <<!
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+ccm del task${Ntask}~1:task:probtrac
+ccm stop
+rm ${CCM45_DBlog}/tsk${Ntask} &
+!
+source ${CCM45_DBlog}/tsk${Ntask} &
+exit 0
+
+
+
+#***********************************************************************
+# Controlli superati. Genero messaggio a video per utente migratore.
+#***********************************************************************
+good_tsk:
+
+echo "LOCK Migrazione ${PROGETTO}${COMITVER}" > ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+echo "MSG:Migrazione Consegna ${PROGETTO}${COMITVER} in CONTINUUS in corso ..."
+echo "MSG:   "
+
+
+#***********************************************************************
+# Genero un batch per realizzare la migrazione. A seconda del contenuto
+# della consegna, il batch creera' dei task ausiliari per migrare il
+# software nei progetti di pertinenza. I task cosi' ottenuti saranno tra
+# loro legati da un legame di corequisito.
+#***********************************************************************
+cat > ${CCM45_DBlog}/DoMig.FIX <<EndOfInput1
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}\`
+
+ccm query -t task -name task${Ntask}
+ccm attr -m resolver -v " " @1
+
+ccm work_area -wa -setpath ${WA_ROOT} ${PROGETTO}~FIX
+ccm work_area -wa -setpath ${WA_ROOT} SQL~FIX
+ccm work_area -wa -setpath ${WA_ROOT} SIS~FIX
+ccm work_area -wa -setpath ${WA_ROOT} SHE~FIX
+ccm work_area -wa -setpath ${WA_ROOT} FRM~FIX
+ccm work_area -wa -setpath ${WA_ROOT} FMX~FIX
+
+
+if (-d ${MIG_ROOT}/${PROGETTO}${COMITVER}/BIN) then
+  ccm query "is_member_of(${PROGETTO}~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task${Ntask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.${PROGETTO}
+  ccm migrate -d ${MIG_ROOT}/${PROGETTO}${COMITVER}/BIN -p ${PROGETTO}~FIX -s sqa >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(${PROGETTO}~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task${Ntask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.${PROGETTO}
+endif
+set ElencoTask = "task${Ntask}"
+set ElencoConsegne = ""
+
+#***************************************************************************
+# Migro SQL se presente.
+#***************************************************************************
+if (-d ${MIG_ROOT}/${PROGETTO}${COMITVER}/SQL) then
+  set VERS_SQL = \`echo SQL${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Sql = \`ccm create_task -s "Migrazione ${PROGETTO}${COMITVER}~Consegna SQL${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SQL} -subsystem SQL | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Sql}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "FIX" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(SQL~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sql}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SQL
+  ccm migrate -d ${MIG_ROOT}/${PROGETTO}${COMITVER}/SQL -p SQL~FIX -s sqa >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(SQL~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sql}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SQL
+  ccm query -t task -name task\${Ntask_Sql}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Sql} -c "Task di riferimento: task${Ntask}"
+  set ElencoConsegne = "\${ElencoConsegne} SQL${COMITVER}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Sql}"
+endif
+
+#***************************************************************************
+# Migro SHE se presente.
+#***************************************************************************
+if (-d ${MIG_ROOT}/${PROGETTO}${COMITVER}/SHE) then
+  set VERS_SHE = \`echo SHE${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_She = \`ccm create_task -s "Migrazione ${PROGETTO}${COMITVER}~Consegna SHE${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SHE} -subsystem SHE | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_She}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "FIX" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(SHE~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_She}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SHE
+  ccm migrate -d ${MIG_ROOT}/${PROGETTO}${COMITVER}/SHE -p SHE~FIX -s sqa >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(SHE~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_She}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SHE
+  ccm query -t task -name task\${Ntask_She}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_She} -c "Task di riferimento: task${Ntask}"
+  set ElencoConsegne = "\${ElencoConsegne} SHE${COMITVER}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_She}"
+endif
+
+#***************************************************************************
+# Migro SISO se presente.
+#***************************************************************************
+if (-d ${MIG_ROOT}/${PROGETTO}${COMITVER}/SIS) then
+  set VERS_SIS = \`echo SIS${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Sis = \`ccm create_task -s "Migrazione ${PROGETTO}${COMITVER}~Consegna SIS${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_SIS} -subsystem SIS | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Sis}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "FIX" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(SIS~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sis}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.SIS
+  ccm migrate -d ${MIG_ROOT}/${PROGETTO}${COMITVER}/SIS -p SIS~FIX -s sqa >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(SIS~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Sis}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.SIS
+  ccm query -t task -name task\${Ntask_Sis}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Sis} -c "Task di riferimento: task${Ntask}"
+  set ElencoConsegne = "\${ElencoConsegne} SIS${COMITVER}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Sis}"
+endif
+
+#***************************************************************************
+# Migro FRM se presente.
+#***************************************************************************
+if (-d ${MIG_ROOT}/${PROGETTO}${COMITVER}/FRM) then
+  set VERS_FRM = \`echo FRM${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Frm = \`ccm create_task -s "Migrazione ${PROGETTO}${COMITVER}~Consegna FRM${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_FRM} -subsystem FRM | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Frm}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "FIX" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(FRM~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Frm}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.FRM
+  ccm migrate -d ${MIG_ROOT}/${PROGETTO}${COMITVER}/FRM -p FRM~FIX -s sqa >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(FRM~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Frm}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.FRM
+  ccm query -t task -name task\${Ntask_Frm}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Frm} -c "Task di riferimento: task${Ntask}"
+  set ElencoConsegne = "\${ElencoConsegne} FRM${COMITVER}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Frm}"
+endif
+
+#***************************************************************************
+# Migro FMX se presente.
+#***************************************************************************
+if (-d ${MIG_ROOT}/${PROGETTO}${COMITVER}/FMX) then
+  set VERS_FMX = \`echo FMX${COMITVER}| awk '{print substr(\$1,1,5)}'\`
+  set Ntask_Fmx = \`ccm create_task -s "Migrazione ${PROGETTO}${COMITVER}~Consegna FMX${COMITVER}" -r cm_sesi -platform HPUX-DB_GPM -release \${VERS_FMX} -subsystem FMX | awk '{print (\$2)}'\`
+  ccm query -t task -n task\${Ntask_Fmx}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  ccm attr -c cod_opzione -t string -v "FIX" @1
+  ccm attr -m resolver -v " " @1
+  ccm query "is_member_of(FMX~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Fmx}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.FMX
+  ccm migrate -d ${MIG_ROOT}/${PROGETTO}${COMITVER}/FMX -p FMX~FIX -s sqa >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+  ccm query "is_member_of(FMX~FIX:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask_Fmx}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.FMX
+  ccm query -t task -name task\${Ntask_Fmx}
+  ccm attr -m resolver -v "cm_sesi" @1
+  ccm attr -m status -v "task_assigned" @1
+  ccm task -checkin \${Ntask_Fmx} -c "Task di riferimento: task${Ntask}"
+  set ElencoConsegne = "\${ElencoConsegne} FMX${COMITVER}"
+  set ElencoTask = "\${ElencoTask} task\${Ntask_Fmx}"
+endif
+
+
+set DBL_FLAG = "N"
+#if (-f ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} ) then
+#  if (\`grep DBL_FLAG ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}|wc -l\` != 0) then
+#    set DBL_FLAG = "Y"
+#  endif
+#endif
+
+if (-f ${CCM45_DBlog}/BfrMig.${PROGETTO}) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a DTM
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.${PROGETTO} ${CCM45_DBlog}/AftMig.${PROGETTO} |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  source ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.${PROGETTO}
+  rm ${CCM45_DBlog}/AftMig.${PROGETTO}
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/${PROGETTO}.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep ${VER} ${CCM45_DBlog}/${PROGETTO}.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( ${VER} != \$jj )  then
+    echo ${VER}:  ${VER} > ${CCM45_DBlog}/${PROGETTO}.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/${PROGETTO}.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/${PROGETTO}.tmp;sort ${CCM45_DBlog}/${PROGETTO}.tmp > ${CCM45_DBlog}/${PROGETTO}.tmp1;mv ${CCM45_DBlog}/${PROGETTO}.tmp1 ${CCM45_DBlog}/${PROGETTO}.tmp;cat ${CCM45_DBlog}/${PROGETTO}.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/${PROGETTO}.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+else
+  if (-f ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}) then
+    rm ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+  endif 
+  touch ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+endif
+
+if (-f ${CCM45_DBlog}/BfrMig.SQL) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a SQL
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.SQL ${CCM45_DBlog}/AftMig.SQL |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.SQL${COMITVER}
+  source ${CCM45_DBlog}/Delta.SQL${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.SQL
+  rm ${CCM45_DBlog}/AftMig.SQL
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SQL.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_SQL} ${CCM45_DBlog}/SQL.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_SQL} != \$jj )  then
+    echo \${VERS_SQL}:  \${VERS_SQL} > ${CCM45_DBlog}/SQL.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/SQL.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SQL.tmp;sort ${CCM45_DBlog}/SQL.tmp > ${CCM45_DBlog}/SQL.tmp1;mv ${CCM45_DBlog}/SQL.tmp1 ${CCM45_DBlog}/SQL.tmp;cat ${CCM45_DBlog}/SQL.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/SQL.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+if (-f ${CCM45_DBlog}/BfrMig.SHE) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a SHE
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.SHE ${CCM45_DBlog}/AftMig.SHE |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.SHE${COMITVER}
+  source ${CCM45_DBlog}/Delta.SHE${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.SHE
+  rm ${CCM45_DBlog}/AftMig.SHE
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SHE.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_SHE} ${CCM45_DBlog}/SHE.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_SHE} != \$jj )  then
+    echo \${VERS_SHE}:  \${VERS_SHE} > ${CCM45_DBlog}/SHE.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/SHE.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SHE.tmp;sort ${CCM45_DBlog}/SHE.tmp > ${CCM45_DBlog}/SHE.tmp1;mv ${CCM45_DBlog}/SHE.tmp1 ${CCM45_DBlog}/SHE.tmp;cat ${CCM45_DBlog}/SHE.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/SHE.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+
+if (-f ${CCM45_DBlog}/BfrMig.SIS) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a SIS
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.SIS ${CCM45_DBlog}/AftMig.SIS |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.SIS${COMITVER}
+  source ${CCM45_DBlog}/Delta.SIS${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.SIS
+  rm ${CCM45_DBlog}/AftMig.SIS
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SIS.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_SIS} ${CCM45_DBlog}/SIS.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_SIS} != \$jj )  then
+    echo \${VERS_SIS}:  \${VERS_SIS} > ${CCM45_DBlog}/SIS.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/SIS.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/SIS.tmp;sort ${CCM45_DBlog}/SIS.tmp > ${CCM45_DBlog}/SIS.tmp1;mv ${CCM45_DBlog}/SIS.tmp1 ${CCM45_DBlog}/SIS.tmp;cat ${CCM45_DBlog}/SIS.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/SIS.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+
+if (-f ${CCM45_DBlog}/BfrMig.FRM) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a FRM
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.FRM ${CCM45_DBlog}/AftMig.FRM |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.FRM${COMITVER}
+  source ${CCM45_DBlog}/Delta.FRM${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.FRM
+  rm ${CCM45_DBlog}/AftMig.FRM
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FRM.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_FRM} ${CCM45_DBlog}/FRM.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_FRM} != \$jj )  then
+    echo \${VERS_FRM}:  \${VERS_FRM} > ${CCM45_DBlog}/FRM.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/FRM.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FRM.tmp;sort ${CCM45_DBlog}/FRM.tmp > ${CCM45_DBlog}/FRM.tmp1;mv ${CCM45_DBlog}/FRM.tmp1 ${CCM45_DBlog}/FRM.tmp;cat ${CCM45_DBlog}/FRM.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/FRM.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+
+
+if (-f ${CCM45_DBlog}/BfrMig.FMX) then
+#***********************************************************************
+# Gestisco la parte di estrazione relativa a FMX
+#***********************************************************************
+  diff -b -e ${CCM45_DBlog}/BfrMig.FMX ${CCM45_DBlog}/AftMig.FMX |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.FMX${COMITVER}
+  source ${CCM45_DBlog}/Delta.FMX${COMITVER}
+  rm ${CCM45_DBlog}/BfrMig.FMX
+  rm ${CCM45_DBlog}/AftMig.FMX
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+  ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FMX.tmp"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+  set jj = \`grep \${VERS_FMX} ${CCM45_DBlog}/FMX.tmp | awk '{print substr(\$1,1,5)}'\`
+
+  if ( \${VERS_FMX} != \$jj )  then
+    echo \${VERS_FMX}:  \${VERS_FMX} > ${CCM45_DBlog}/FMX.tmp
+    ccm set text_editor "cat ${CCM45_DBlog}/FMX.tmp >> %filename"
+    ccm query -t admin -n base
+    ccm attr -m releases @1
+  endif
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+  ccm set text_editor "cat %filename > ${CCM45_DBlog}/FMX.tmp;sort ${CCM45_DBlog}/FMX.tmp > ${CCM45_DBlog}/FMX.tmp1;mv ${CCM45_DBlog}/FMX.tmp1 ${CCM45_DBlog}/FMX.tmp;cat ${CCM45_DBlog}/FMX.tmp > %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+
+  ccm set text_editor "\`ccm set text_editor_orig\`"
+  ccm unset text_editor_orig
+
+  rm ${CCM45_DBlog}/FMX.tmp
+
+#***********************************************************************
+# Fine modifica release-table
+#***********************************************************************
+endif
+
+echo "Delta.${PROGETTO}${COMITVER} Created" >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+#***********************************************************************
+# Set dei corequisiti delle consegne
+#***********************************************************************
+set Cons_DTM = "${PROGETTO}${COMITVER}"
+set Coreq_x = ""
+set Coreq_DTM = "$9"
+
+foreach sub_prj (\$ElencoConsegne)
+ #if (\$Coreq_DTM == "" \$Control_DTM == 0) then
+ if (\$Coreq_DTM == "")  then
+    set Cor_sep = ""
+    set Coreq_DTM = "\$sub_prj\$Cor_sep\$Coreq_DTM"
+ else
+    set Cor_sep = ","
+    set Coreq_DTM = "\$sub_prj\$Cor_sep\$Coreq_DTM"
+ endif
+ 
+  foreach sub_prk (\$ElencoConsegne)
+   if (\$sub_prk == \$sub_prj) then
+    echo "skip" \$sub_prk
+   else
+    set Coreq_x = "\$sub_prk","\$Coreq_x"
+   endif
+  end
+
+   echo PREREQUISIT: >> ${CCM45_DBlog}/Delta.\$sub_prj
+   echo "COREQUISIT:"\$Coreq_x\$Cons_DTM | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.\$sub_prj
+
+   set Coreq_x = ""
+end
+
+echo PREREQUISIT:$8 | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+echo COREQUISIT:\$Coreq_DTM | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+
+#***********************************************************************   
+# Inserisco nel file Delta.Consegna le label FOLDER_UPDATE per evitare     
+# che le consegne di FIX siano esaminate dall'UpFldFix_script.            
+#***********************************************************************   
+echo SQA_FOLDER_UPDATE >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+echo PRD_FOLDER_UPDATE >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+#******************************************************************************
+#* Inserimento della label FOLDER_UPDATE nei delta dei Progetti associati a DTM
+#******************************************************************************
+ foreach progetto (${DTM_PROJECTS})                                            
+  if (-f ${CCM45_DBlog}/Delta.\${progetto}${COMITVER}) then                    
+    echo SQA_FOLDER_UPDATE >> ${CCM45_DBlog}/Delta.\${progetto}${COMITVER}     
+    echo PRD_FOLDER_UPDATE >> ${CCM45_DBlog}/Delta.\${progetto}${COMITVER}     
+  endif                                                                        
+ end                                                                           
+#***********************************************************************
+# Setto l'attributo release del task e lo scrivo nella description
+#***********************************************************************
+
+ccm query -t task -n task${Ntask}
+ccm attr -m release -v ${VER} @1
+ccm attr -m resolver -v chk_dtm @1
+
+ccm attr -c task_description -t string -v "${PROGETTO}${COMITVER}~FIX" @1
+if (\${status}) then
+  ccm attr -m task_description -v "${PROGETTO}${COMITVER}~FIX" @1
+endif
+
+#***********************************************************************
+#* Set della Synopsis del Task di Migrazione
+#***********************************************************************
+set synps = \`ccm query -t task -n task$4 -u -f "%task_synopsis"\`
+set synps = \`printf "%s  %s " "$2$3~FIX Migrazione" \${synps}\`  
+ccm attr -m task_synopsis -v "\${synps}" @1            
+
+ccm attr -c task_description -t string -v "$2$3~FIX" @1
+if (\${status}) then                                   
+  ccm attr -m task_description -v "$2$3~FIX" @1        
+endif                                                  
+
+#***********************************************************************
+#* Creo il task per cm_sesi                                             
+#***********************************************************************
+set N_CM = \`ccm create_task -s "Autorizzazione alla distribuzione in PRD-FIX di ${PROGETTO}${COMITVER}" -platform HPUX-DB_GPM -r cm_sesi -release ${VER} -subsystem ${PROGETTO} | awk '{ print (\$2) }'\`
+
+ccm query -t task -name task\${N_CM}                     
+ccm attr -c comitver -t string -v "${COMITVER}" @1      
+ccm attr -c cod_opzione -t string -v "Migraz.Fix" @1
+
+ccm stop
+
+rm ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+rm ${CCM45_DBlog}/DoMig.FIX
+  
+EndOfInput1
+
+#***********************************************************************
+# Run the Script.
+#***********************************************************************
+
+source ${CCM45_DBlog}/DoMig.FIX &

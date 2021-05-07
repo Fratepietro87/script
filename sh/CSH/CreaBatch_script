@@ -1,0 +1,170 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     CreaBatch_script
+#*
+#* Goal: Creare i file comandi da spedire ad host e il batch da lanciare 
+#*       per mvs.
+#*
+#* Parametri passati: $1 SWD_ROOT
+#*                    $2 AMBIENTE
+#*                    $3 BATCH_DIR
+#*                    $4 PROGETTO
+#*                    $5 NUM_CONSEGNA
+#*                    $6 DIR_PROGETTO
+#*
+#* Author: Luca Brizzolara Mar 2000
+#*
+#***********************************************************************
+
+
+set CCM45 = "/usr/CONT_SRV/ccm45"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_WEB"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+
+set SWD_ROOT = $1
+set AMBIENTE = $2
+set BATCH_DIR = $3
+set PROGETTO = $4
+set NUM_CONSEGNA = $5
+set DIR_PROGETTO = $6
+set APPLICAZIONE = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+
+set COMMAND_DIR = "${BATCH_DIR}/COMANDI"
+set SAMPLE_DIR = "${BATCH_DIR}/SAMPLE"
+
+
+set SAMPLEJOB = "${SAMPLE_DIR}/sample.job"
+set SAMPLESTEP = "${SAMPLE_DIR}/sample.step"
+set OLD_NAME = "${APPLICAZIONE}${NUM_CONSEGNA}.cpo.${AMBIENTE}"
+set NEW_NAME = "${APPLICAZIONE}${NUM_CONSEGNA}.cpn.${AMBIENTE}"
+set DELETE_NAME = "${APPLICAZIONE}${NUM_CONSEGNA}.rmn.${AMBIENTE}"
+set JOB_NAME = "${APPLICAZIONE}${NUM_CONSEGNA}.job.${AMBIENTE}"
+
+if (-d ${COMMAND_DIR}/${AMBIENTE} ) then
+  cp ${COMMAND_DIR}/${AMBIENTE}/* ${COMMAND_DIR}/DEPOT
+  rm -r ${COMMAND_DIR}/${AMBIENTE}
+endif
+mkdir ${COMMAND_DIR}/${AMBIENTE}
+
+
+set BASE_DIR = "/u/webchm"
+set TEMP_DIR = "${BASE_DIR}/${AMBIENTE}"
+set user_dom = "WEBCHM"
+set acc_num = "(910001210000TS)"
+if (${AMBIENTE} == SQA) then
+  set FINAL_DIR = "/web_coll_appl"
+else
+  if (${AMBIENTE} == PRD) then
+    set FINAL_DIR = "/web_prod_appl"
+  else
+     if (${AMBIENTE} == FIX) then
+      set FINAL_DIR = "/web_prod_appl"
+     endif
+  endif
+endif
+
+
+#***********************************************************************
+# Creo le liste di comandi da lanciare direttamente su domino.
+# Avro' una script per la copia di backup, una per l'installazione del
+# nuovo software, ed una per la rimozione dei file nuovi dalla directory
+# di appoggio. Inoltre creo un batch per sottomettere un job per 
+# l'esecuzione in sequenza ad host delle tre script appena menzionate.
+#***********************************************************************
+
+set NEW_DIR = "${TEMP_DIR}/new"
+set OLD_DIR = "${TEMP_DIR}/old"
+set COMANDI_DOMINO_DIR = "${BASE_DIR}/comandi"
+
+set COPY_TO_OLD = "${COMMAND_DIR}/${AMBIENTE}/${OLD_NAME}"
+set COPY_TO_NEW = "${COMMAND_DIR}/${AMBIENTE}/${NEW_NAME}"
+set DELETE_NEW = "${COMMAND_DIR}/${AMBIENTE}/${DELETE_NAME}"
+set JOB_MVS = "${COMMAND_DIR}/${AMBIENTE}/${JOB_NAME}"
+rm -f ${COPY_TO_OLD} ${COPY_TO_NEW} ${DELETE_NEW}
+
+
+#***********************************************************************
+# Genero il file COPY_TO_OLD per la copia di salvataggio.
+#***********************************************************************
+find ${SWD_ROOT}/${AMBIENTE}/${DIR_PROGETTO} -type f |awk -F"${AMBIENTE}" '{ print $2 }' |xargs ${SCRIPT_DIR}/genera_comandi_cp ${FINAL_DIR} ${OLD_DIR} ${COPY_TO_OLD}
+
+#***********************************************************************
+# Genero il file COPY_TO_NEW per l'installazione.
+#***********************************************************************
+find ${SWD_ROOT}/${AMBIENTE}/${DIR_PROGETTO} -type f |awk -F"${AMBIENTE}" '{ print $2 }' |xargs ${SCRIPT_DIR}/genera_comandi_cp ${NEW_DIR} ${FINAL_DIR} ${COPY_TO_NEW}
+
+#***********************************************************************
+# Genero il file DELETE_NEW per la rimozione dei file nuovi da 
+# directory di appoggio.
+#***********************************************************************
+find ${SWD_ROOT}/${AMBIENTE}/${DIR_PROGETTO} -type f |awk -F"${AMBIENTE}" '{ print $2 }' |xargs ${SCRIPT_DIR}/genera_comandi_rm ${NEW_DIR} ${DELETE_NEW}
+
+#***********************************************************************
+# Genero il file JOB_MVS per sottomettere il job ad host.
+# E' importante non modificare l'ordine con cui sono lanciati i tre 
+# file comandi.
+#***********************************************************************
+
+set num_obj = `cat ${SAMPLEJOB} | wc -l`
+set line_job = "${user_dom}CP JOB "
+set line_rest = "${acc_num},CM,MSGCLASS=T,CLASS=T,NOTIFY=${user_dom}"
+set i = 0
+while ($i < ${num_obj})
+  @ i++
+  set linea = `head -n $i ${SAMPLEJOB}  | tail -n 1`
+  if (`echo "${linea}" | grep JOB | wc -l` != 0)  then
+    echo "//"${line_job} ${line_rest} > ${JOB_MVS}
+  else
+    echo "//*"${linea} >> ${JOB_MVS}
+  endif
+end
+
+
+echo ${COPY_TO_OLD} > ${COMMAND_DIR}/comandi.tmp
+echo ${COPY_TO_NEW} >> ${COMMAND_DIR}/comandi.tmp
+echo ${DELETE_NEW} >> ${COMMAND_DIR}/comandi.tmp
+set cmdlist = `cat ${COMMAND_DIR}/comandi.tmp | grep .$2 | awk -F/$2/ '{ print ($2) }'`
+
+foreach kind (${cmdlist})
+  set type_cmd = ` echo ${kind} | awk -F. '{ print toupper ($2) }'`
+  if ( ${type_cmd} == CPO ) then
+    set cond_code = ""
+  else
+    set cond_code = ",COND=(01,LT)"
+  endif
+  set num_obs = `cat ${SAMPLESTEP} | wc -l`
+  set line_step = "//${type_cmd}  EXEC PGM=BPXBATCH${cond_code}"
+  set line_stdin = "//STDIN    DD PATH='${COMANDI_DOMINO_DIR}/${kind}"
+  set line_stdout = "//STDOUT  DD PATH='${TEMP_DIR}"
+  set line_stderr = "//STDERR  DD SYSOUT="
+  set j = 0
+  while ($j < ${num_obs} )
+    @ j++
+    set lineb = `head -n $j ${SAMPLESTEP} | tail -n 1`
+    if (`echo ${lineb} | grep + | wc -l` != 0) then
+      echo "//*"${lineb} >> ${JOB_MVS}
+    else
+      if (`echo ${lineb} | grep STDIN | wc -l` != 0) then
+        echo ${line_stdin}"'" >> ${JOB_MVS}
+      else
+        if (`echo ${lineb} | grep P01 | wc -l` != 0) then
+          echo ${line_step} >> ${JOB_MVS} 
+        else
+          if (`echo ${lineb} | grep STDOUT | wc -l` != 0) then
+            echo ${line_stdout}"/response.txt'" >> ${JOB_MVS} 
+          else
+            if (`echo ${lineb} | grep STDERR | wc -l` != 0) then
+              echo  ${line_stderr}"*" >> ${JOB_MVS}
+            endif
+          endif
+        endif
+      endif
+    endif
+  end
+end
+rm ${COMMAND_DIR}/comandi.tmp
+
+
+exit 0
+

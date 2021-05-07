@@ -1,0 +1,40 @@
+#!/bin/csh 
+#*************************************************************
+#
+#		CancelloSorgenti_script	
+#
+#
+#  Goal: Cancellare i file .java dalle directory di estrazione
+#        per evitarne la distribuzione.           
+#
+#  Parametri passati: $1= AMBIENTE (SQA,PRD o FIX)
+#
+#  Autore: Luciano Giovannini Marzo 2000
+#
+#
+#**************************************************************
+
+set AMBIENTE = $1
+set SWD_ROOT = "/usr/CONT_SRV/SWD_WEB"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_WEB"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set i=0
+if (-d ${SWD_ROOT}/${AMBIENTE}) then
+     
+  find ${SWD_ROOT}/${AMBIENTE} -type f -name '*.java' > $CCM45_DBlog/File_java_${AMBIENTE}
+  set Num_java = `cat $CCM45_DBlog/File_java_${AMBIENTE} | wc -l`
+  
+  while ($i < ${Num_java})
+   @ i++
+   set File_java = `head -n $i $CCM45_DBlog/File_java_${AMBIENTE}| tail -n 1`
+   rm -f ${File_java}
+   if (${status}) then
+    echo "ERRORE: Cancellazione non riuscita di ${file_java}" >> $CCM45_DBlog/ErrMsg
+   endif
+  end
+
+endif 
+
+rm -f $CCM45_DBlog/File_java_${AMBIENTE}
+
+exit 0

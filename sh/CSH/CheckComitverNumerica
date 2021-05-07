@@ -1,0 +1,50 @@
+#!/bin/csh
+#***********************************************************************
+#*                       CheckComitverNumerica
+#* 
+#* Goal: Controllare che la comitver inserita sia corretta, cioe':
+#*       a) sia essere di 5 caratteri (fisso per ogni progetto); 
+#*       b) che il formato sia corretto (per questo progetto la comitver 
+#*          numerica.
+#*       Non controllo l'incrementalita'.
+#*       I codici di ritorno sono: 
+#*       0 - tutto ok
+#*       1 - comitver non di 5 caratteri
+#*       2 - comitver formalmente non corretta.
+#*       ATTENZIONE: esco al primo errore riscontrato.
+#*
+#* Parametri passati:$1 Nome del progetto
+#*                   $2 Numero della consegna
+#* 
+#* Autore: Luca Brizzolara - Apr 2000
+#* 
+#***********************************************************************
+
+set PROGETTO = $1
+set COMITVER = $2
+set NUMERI = "0 1 2 3 4 5 6 7 8 9"
+
+
+#***********************************************************************
+# Controllo che la comitver sia lunga composta di 5 caratteri.
+#***********************************************************************
+if ( `echo ${COMITVER} |awk '{ print length($0) }'` != 5 ) then
+  exit 1
+endif
+
+#***********************************************************************
+# Controllo che la comitver sia formata tutta da numeri.
+#***********************************************************************
+set alfa = `echo ${COMITVER} |awk '{ print substr($1,1,1) }'`
+set beta = `echo ${COMITVER} |awk '{ print substr($1,2,1) }'`
+set gamma = `echo ${COMITVER} |awk '{ print substr($1,3,1) }'`
+set delta = `echo ${COMITVER} |awk '{ print substr($1,4,1) }'`
+set epsilon = `echo ${COMITVER} |awk '{ print substr($1,5,1) }'`
+if !((`echo ${NUMERI} |grep ${alfa}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${beta}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${gamma}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${delta}|wc -l` != 0)&&(`echo ${NUMERI} |grep ${epsilon}|wc -l` != 0)) then
+  exit 2
+endif
+
+#***********************************************************************
+# I controlli hanno dato esito positivo.
+#***********************************************************************
+exit 0

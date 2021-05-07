@@ -1,0 +1,171 @@
+#!/bin/csh
+############################################################
+#
+#                 InsertNewIdent_script
+#
+# Goal: inserire la riga di IDENT
+#
+#
+# Parameters: $1 file path
+#             $2 object name
+#             $3 object version
+#             $4 type
+#             $5 owner
+#             $6 script path
+#             $7 file temporaneo
+#
+# Author: Luca Brizzolara, Giuseppe Palazzetti, Jen 2001
+#
+############################################################
+
+#*****************************************************
+# Definizione delle variabili
+#*****************************************************
+set FILE_PATH = $1
+set OBJECT_NAME = $2
+set OBJECT_VERSION = $3
+set TYPE = $4
+set OWNER = $5
+set SCRIPT_PATH = $6
+set TEMP_FILE = $7
+set UTILITY_PATH = "${SCRIPT_PATH}/Utility"
+set PARSING_STRINGA = `cat ${UTILITY_PATH}/String.cfg`
+set FILE_CON_PATH = "${FILE_PATH}/${OBJECT_NAME}"
+
+#*****************************************************
+# Ricavo il numero totale di righe
+#*****************************************************
+set NumeroTotaleRighe = `cat ${FILE_CON_PATH}|wc -l`
+
+#*****************************************************
+# Controllo l'effettiva esistenza  del file nel
+# path ricavato.
+#*****************************************************
+if !(-f ${FILE_CON_PATH} ) then
+  exit 1
+endif
+
+#*****************************************************
+# Ricerco il numero della riga dell'ident
+#*****************************************************
+if (`grep ${PARSING_STRINGA} ${FILE_CON_PATH} |wc -l` != 0) then
+  set NumeroRigaIdent = `grep -n ${PARSING_STRINGA} ${FILE_CON_PATH} |awk -F: '{ print $1 }'`
+else
+  set NumeroRigaIdent = 0
+endif
+
+#*****************************************************
+# Nel caso l'ident non sia nella prima riga, metto nel
+# file temporaneo le righe che la precedono
+#*****************************************************
+if (${NumeroRigaIdent} > 1) then
+  set NumeroPrimeRighe = `expr ${NumeroRigaIdent} - 1 `
+  head -n${NumeroPrimeRighe} ${FILE_CON_PATH} > ${TEMP_FILE}
+else
+  cat /dev/null > ${TEMP_FILE}
+endif
+
+######################################################
+# Algoritmo di modifica ident
+######################################################
+
+#*****************************************************
+# Setto il valore di Ident pari alla versione in Continuus
+#*****************************************************
+set IDENT = "${OBJECT_VERSION}"
+
+#*****************************************************
+# Set della data nel formato voluto.
+#*****************************************************
+set DATA = `date +"%Y/%m/%d %H:%M:%S"`
+
+#*****************************************************
+# Differenzio tra le varie tipologie di oggetti
+#*****************************************************
+switch(${TYPE})
+#*****************************************************
+# Include file (.h)
+#*****************************************************
+  case incl:
+cat >> ${TEMP_FILE}<< EndOfIncl
+/* ${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$ */
+EndOfIncl
+breaksw
+#*****************************************************
+# Shell script (.sh)
+#*****************************************************
+  case shsrc:
+cat >> ${TEMP_FILE}<< EndOfShSrc
+#${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$
+EndOfShSrc
+breaksw
+#*****************************************************
+# Shell script Korn (.ksh)
+#*****************************************************
+  case kshsrc:
+cat >> ${TEMP_FILE}<< EndOfKShSrc
+#${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$
+EndOfKShSrc
+breaksw
+#*****************************************************
+# Ascii
+#*****************************************************
+  case ascii:
+cat >> ${TEMP_FILE}<< EndOfAscii
+#${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$
+EndOfAscii
+breaksw
+#*****************************************************
+# Shell script C (.csh)
+#*****************************************************
+  case cshsrc:
+cat >> ${TEMP_FILE}<< EndOfCShSrc
+#${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$
+EndOfCShSrc
+breaksw
+#*****************************************************
+# Makefile
+#*****************************************************
+  case makefile:
+cat >> ${TEMP_FILE}<< EndOfMkFile
+#${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$
+EndOfMkFile
+breaksw
+#*****************************************************
+# Script SQL
+#*****************************************************
+  case SQLsrc:
+cat >> ${TEMP_FILE}<< EndOfSQL
+REM ${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$
+EndOfSQL
+breaksw
+#*****************************************************
+# ATTENZIONE: Il default viene utilizzato per i 
+# Programmi C (type c++). In caso sia necessario inserire
+# un nuovo caso, utilizzare una nuova entry del case.
+# NON MODIFICARE IL DEFAULT
+#*****************************************************
+  default:
+cat >> ${TEMP_FILE}<< EndOfDef
+static char *rcsid="${PARSING_STRINGA} ${OBJECT_NAME},v ${IDENT} ${DATA} ${OWNER} Exp \$";
+EndOfDef
+endsw
+endsw
+
+
+######################################################
+# Fine modifica ident
+######################################################
+
+#*****************************************************
+# Concludo il file temporaneo
+#*****************************************************
+set NumeroUltimeRighe = `expr ${NumeroTotaleRighe} - ${NumeroRigaIdent} `
+tail -${NumeroUltimeRighe} ${FILE_CON_PATH} >> ${TEMP_FILE}
+
+#*****************************************************
+# Sostituisco il file originario con il temporaneo
+# che ho costruito.
+#*****************************************************
+mv ${TEMP_FILE} ${FILE_CON_PATH}
+exit 0

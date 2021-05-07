@@ -1,0 +1,56 @@
+#!/bin/csh
+#***********************************************************************
+#*		CheckPrereq_Mig_script
+#* 
+#* Goal: Controllare se la lista di prerequisiti inserita all'atto di
+#*       migrare e' corretta, cioe' se i prerequisiti sono corretti 
+#*       sintatticamente e sono stati migrati. La script ritorna  0 nel
+#*       caso sia tutto corretto, 2 se il prerequisito non e' ancora
+#*       stato migrato, 1 se il prerequisito non e' di 8 caratteri.
+#*       In caso di errore (ritorno 1 o 2), in ${FILE_ERRORE} scrivo il
+#*       prerequisito errato, in caso di esito positivo scrivo in 
+#*       ${FILE_ELENCO} l'elenco di prerequisiti.
+#* 
+#* Parametri passati:$1 File log prerequisiti
+#*                   $2 CCM45_DBlog
+#*                   $3 CCM45_DBlog2
+#*                   $4 file elenco prerequisiti 
+#*                   $5 Prerequisiti 
+#* 
+#* Autore: Luciano Giovannini Feb 2000 
+#* 
+#***********************************************************************
+
+set FILE_ERRORE = $1
+set CCM45_DBlog = $2
+set CCM45_DBlog2 = $3
+set FILE_ELENCO = $4
+set str = `echo $5 | awk '{gsub(" ","",$1);print toupper($1)}' FS=""`
+set sep = `echo ${str} | awk '{print gsub(",","",$1)}'`
+
+
+if (`echo ${str} | awk '{print length($1)}'` > 0)  then
+  set i = 0
+  while ($i <= $sep)
+    @ i++
+#***********************************************************************
+# Controllo se il corequisito e' si 8 caratteri.
+#***********************************************************************
+    if ((`echo ${str} | awk '{gsub(" ","",$1);print toupper($1)}' | cut -d, -f$i | awk '{print length($1)}'`) == 8) then 
+#***********************************************************************
+# Controllo se esiste il file delta del prerequisito; la sua esistenza 
+# significa che il prerequisito e' stato migrato.
+#***********************************************************************
+      if !(((-f ${CCM45_DBlog}/Delta.`echo ${str} | cut -d, -f$i`))||((-f ${CCM45_DBlog2}/Delta.`echo ${str} | cut -d, -f$i`))) then
+        echo ${str} | cut -d, -f$i >> ${FILE_ERRORE}
+        exit 2 
+      else
+        echo ${str} | cut -d, -f$i >> ${FILE_ELENCO}
+      endif
+    else
+      echo ${str} | cut -d, -f$i >> ${FILE_ERRORE}
+      exit 1
+    endif
+  end
+endif
+exit 0

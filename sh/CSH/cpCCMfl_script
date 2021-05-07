@@ -1,0 +1,135 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* Copy from WorkArea IBM AIX CSHELL Script for COMIT 
+#*
+#* This script is a funcion call. XARGS listing file-system structure.
+#*
+#* xargs cpCCMfl_script SWD_ROOT WA_ROOT SCForCAS.. CSUorSQAorPRD
+#*
+#* Author: Cavana Carlo 1998
+#* Modified: Brizzolara Luca 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Parametri passati da UpFldSWD_script:                                                        
+#
+# SWD_ROOT ($1): /usr/CONT_SRV/SWD_FIL                                                         
+# WA_ROOT ($2): /usr/CONT_SRV/ccm_wa/DB_FIL                                                    
+# $3: progetto (SCF, CAS, PDD ecc.)                                                            
+# $4: ambiente (CSU, SQA, PRD)                                                                 
+#                                                                                              
+# Oltre a parametri fissi vengono passati a cpCCMfl_script, tramite xargs, la lista degli      
+# oggetti (in numero variabile), con versione, presenti in ciascuna consegna appartenente      
+# al progetto che si sta esaminando, e che e' idonea all'estrazione (cpCCMfl_script            
+# viene chiamato entro un ciclo di consegne interno ad un ciclo sui progetti).                 
+#                                                                                              
+# - commento di Romanini -                                                                     
+# **********************************************************************
+
+set SWD_ROOT = $1
+set SWD_WA = $2
+set progetto = $3
+set ambiente = $4
+set root_dest = ${SWD_ROOT}/${ambiente}
+set wa = ${SWD_WA}/${progetto}~${ambiente}/${progetto}
+
+
+# **********************************************************************
+# Con le seguenti quattro "shift" si lasciano da parte i quattro parametri fissi             
+# ($1, $2, $3, $4) e si considerano solo gli oggetti del database in esame.                  
+# Invece di dare quattro "shift" si poteva fare un ciclo del tipo:                           
+# set n = 0                                                                                  
+# while ($n != 4)                                                                            
+#   shift                                                                                    
+#   set n = `expr $n + 1`                                                                    
+# end                                                                                        
+#                                                                                            
+# OCCORRE comunque ricordarsi che, se cambia il numero di parametri fissi passati, vanno     
+# aggiunte "shift".                                                                          
+# - commento di Romanini -                                                                   
+# **********************************************************************
+
+shift
+shift
+shift
+shift
+
+                                                                                             
+# ******************************************************************************************
+# Il ciclo seguente scandisce tutti gli oggetti passati alla script come argomenti da xargs: 
+# $1 e' di volta in volta ciascuno di questi oggetti, grazie alla "shift" in fondo al ciclo. 
+# - commento di Romanini -                                                                   
+# ******************************************************************************************
+
+
+while ($#argv != 0)
+  echo $1
+
+
+# ******************************************************************************************
+# La "if" successiva controlla che l'oggetto passato alla presente script, nella forma             
+# "oggetto~versione:tipo:istanza", sia in uso nel database, per l'ambiente e il progetto           
+# che si stanno esaminando.                                                                        
+# Se si, allora:                                                                                   
+# a) si definisce la variabile "nome_file" come risultato della "ccm finduse"                      
+#    dell'oggetto (in formato "oggetto~versione:tipo:istanza"), in esame.                          
+#    "nome_file" avra' un contenuto del tipo: PFA/c/forms/kmf2h012.frm~2.                          
+#    Esso e' l'oggetto cercato,con il suo albero , nel database di Continuus.                      
+#                                                                                                  
+# b) si definisce la variabile "dest", che contiene il file con il suo albero, senza               
+#    la directory di progetto: nell'esempio precedente "dest" vale : c/forms/kmf2h012.frm.         
+#                                                                                                  
+# c) si definisce la variabile "sep" che contiene il numero dei separatori "/",                    
+#    presenti in "dest" (cambia a seconda di "dest")                                               
+#                                                                                                  
+# d) si definisce la variabile "rootsep", contenente il numero dei separatori "/", presenti        
+#    nella directory di destinazione "root" che e', ad es., /usr/CONT_SRV/SWD_FIL/SQA (e' fisso)   
+#                                                                                                  
+# e) si ha il ciclo interno che costruisce,nella directory "base" o "root" di destinazione,        
+#    (es. /usr/CONT_SRV/SWD_FIL/SQA) la directory dell'oggetto in esame e , se essa non c'e',      
+#    la crea.                                                                                      
+#                                                                                                  
+# f) se il file esaminato e' presente nella work-area, e non e' un "readme.*" o un tipo            
+#    dpdd.sql allora viene copiato dalla workarea alla directory di estrazione,                    
+#    precedentemente costruita.                                                                    
+#                                                                                                  
+# DA NOTARE: l'oggetto in esame (ad es. kmf2h012.frm~2:form:1), viene ricercato,tramite la         
+#            "ccm finduse", nel database,per l'ambiente (CSU,SQA,PRD) e il progetto in esame.      
+#            Cio' significa che, se si sta estraendo per la PRD, ad es., questo stesso             
+#            oggetto si trova gia' nel database in quell'ambiente, anche se l'estrazione per       
+#            l'ambiente stesso non e' conclusa (e' in corso).                                      
+#            La ragione di cio' e' che, a questo punto, e' gia stato creato (in UpFldSWD_script)   
+#            il task ghost, ad es. per PRD, con l'oggetto agganciato.                              
+# - commento di Romanini -                                                                         
+# ******************************************************************************************
+
+
+  if(`ccm finduse $1|grep ${progetto}~${ambiente}|awk '{print ($1)}'|awk -F"@" '{ print ($1) }'|wc -l ` == 1 ) then
+    set nome_file = `ccm finduse $1|grep ${progetto}~${ambiente}|awk -F" " '{print ($1)}'|awk -F"@" '{ print ($1) }'`
+    set dest = `echo ${nome_file} | awk '{print substr($1,index($1,"/")+1,index($1,"~")-index($1,"/")-1)}'`
+    set sep = `echo ${dest} | awk '{print gsub("/","",$1)}'`
+    set rootsep = `echo ${root_dest} | awk '{print gsub("/","",$1)}'`
+    set i = ${rootsep}
+    while ($i <= (${rootsep} + ${sep}))
+      @ i++
+      set cur_dir = `echo ${root_dest}/${dest} | cut -d/ -f1-$i`
+      if !(-d ${cur_dir}) then
+        echo mkdir ${cur_dir} 
+        mkdir ${cur_dir}
+        chmod a+w ${cur_dir} 
+      endif
+    end
+    if (-f ${wa}/${dest}) then
+      if (`echo ${nome_file} | grep -i "README."` != '' || `echo ${nome_file} | grep -i "DPDD.SQL"` != '' || `echo ${nome_file} | grep -i "DCRS.SQL"` != '' || `echo ${nome_file} | grep -i "DGIO.SQL"` != '' || `echo ${nome_file} | grep -i "FIT.TXT"` != '' ) then
+        echo skipp \[ ${wa}/${dest} \] 
+      else 
+        echo copio from \[ ${wa}/${dest} \] to \[ ${root_dest}/${dest} \]
+        cp -f ${wa}/${dest} ${root_dest}/${dest}
+        chmod a+w ${root_dest}/${dest}
+      endif
+    endif
+  endif
+  shift
+end

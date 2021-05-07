@@ -1,0 +1,34 @@
+#!/bin/csh
+
+setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+setenv REBOL_WORK /usr/CONT_SRV/rebol/script
+setenv REBOL_LOG /usr/CONT_SRV/rebol/log
+ 
+#Controlla le mail ricevute e aggiorna i database degli utenti 
+$REBOL_WORK/checkmail.r >> $REBOL_LOG/mail_log
+
+#Rispedisce le mails che sono parcheggiate nella dir $REBOL_WORK/unsent
+$REBOL_WORK/resend.r >> $REBOL_LOG/mail_log
+
+set curr_data = `date "+%d%m%Y"`
+
+#Elimino il file per le mails per chiusura test nell'ambiente SA
+if ( -f $REBOL_WORK/data/TestOKsend.SA ) then
+   rm $REBOL_WORK/data/TestOKsend.SA
+endif
+ 
+#Spedisce le mails per chiusura test nell'ambiente di CSU
+if ( -f $REBOL_WORK/data/TestOKsend.CSU ) then
+   mv $REBOL_WORK/data/TestOKsend.CSU $REBOL_WORK/data/TestOKsend.CSU.$curr_data
+   set parm = "EMAILTST CSU $REBOL_WORK/data/TestOKsend.CSU.$curr_data"
+   $REBOL_WORK/mailer.r $parm >> $REBOL_LOG/mail_log
+   rm $REBOL_WORK/data/TestOKsend.CSU.$curr_data
+endif
+ 
+#Spedisce le mails per chiusura test nell'ambiente di SQA
+if ( -f $REBOL_WORK/data/TestOKsend.SQA ) then
+   mv $REBOL_WORK/data/TestOKsend.SQA $REBOL_WORK/data/TestOKsend.SQA.$curr_data
+   set parm = "EMAILTST SQA $REBOL_WORK/data/TestOKsend.SQA.$curr_data"
+   $REBOL_WORK/mailer.r $parm >> $REBOL_LOG/mail_log
+   rm $REBOL_WORK/data/TestOKsend.SQA.$curr_data
+endif

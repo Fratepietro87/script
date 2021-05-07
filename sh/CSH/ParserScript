@@ -1,0 +1,194 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                     ParserScript
+#*
+#* Goal: in base alla tipologia di software estratto, decido cosa fare.
+#*       Se e' stata estratta la directory u/dsim, faccio un tar di
+#*       quello che c'e' sotto e uno di quello che eventualmente ho 
+#*       sotto la directory IFACE. Comprimo i tar e li spedisco via rcp.
+#*       Tutto il resto del software, lo comprimo e lo spedisco via cp
+#*       utilizzando samba per montare i dischi delle macchine NT.
+#* 
+#* Parametri passati: $1 SWD_ROOT (/usr/CONT_SRV/SWD_GPM)
+#*                    $2 AMBIENTE (SQA o PRD)
+#*                    $3 IFACE_DIR (/usr/CONT_SRV/SWD_GPM/IFACE)
+#*                    $4
+#*                    $5
+#*
+#* Author: Brizzolara Luca Nov 1999
+#* Modificata da Pietro Bianchi il 20/01/2000
+#***********************************************************************
+
+#**********************************************************************
+#* Definizione delle variabili
+#**********************************************************************
+
+set SWD_ROOT = $1
+set AMBIENTE = $2
+set IFACE_DIR = $3
+set CCM45 = "/usr/CONT_SRV/ccm45"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CNF_DIR = "${CCM45_DB}/lib/notify/cnf"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set BATCH_DIR = "/usr/CONT_SRV/SWD_BATCH"
+set TAR_DIR = "/usr/CONT_SRV/SWD_TAR"
+#set IFACE_DEST_DIR = "???"
+#set DSIM_TEMP_DIR = "???"
+#set FMX_DEST_DIR = "???"
+#set CHIAVARI_DEST_DIR = "/bchp"
+set INIFILE = "${EXE_DIR}/parser.ini"
+set RESPONSE_FILE = "${SWD_ROOT}/${AMBIENTE}/response.txt"
+
+
+#**********************************************************************
+# Leggo le variabili dal file ini (vediamo quali e se necessario)
+#**********************************************************************
+#if ( ! -r "${INIFILE}" )  then
+#  echo "MSG: non posso leggere il file ${INIFILE}" >> ${RESPONSE_FILE}
+#  exit 14
+#endif
+
+
+
+#**********************************************************************
+# Ricavo il numero dell'estrazione
+#**********************************************************************
+set CONSEGNA_FILE = "${CNF_DIR}/consegna.$2"
+if ( ! -r "${CONSEGNA_FILE}" )  then
+  echo "MSG: non posso leggere il file ${CONSEGNA_FILE}" >> ${RESPONSE_FILE}
+  exit 11
+endif
+
+set CONSEGNA_FILE_BACKUP = ${CONSEGNA_FILE}.backup
+mv ${CONSEGNA_FILE} ${CONSEGNA_FILE_BACKUP}
+if (${status}) then
+  echo "Non posso rinominare il file CONSEGNA_FILE." >> ${RESPONSE_FILE}
+  echo "Un altro processo potrebbe averlo in uso." >> ${RESPONSE_FILE}
+  exit 12
+endif
+
+#**********************************************************************
+# Setto il nome del file che scrivero' per fare l'installazione
+#**********************************************************************
+if ($2 == SQA) then
+  set CONSEGNA_AMBIENTE = "COL"
+else
+  if ($2 == PRD) then
+    set CONSEGNA_AMBIENTE = "PRD"
+  else
+    echo "$2 non ha mappatura per la creazione dei batch" >> ${RESPONSE_FILE}
+    exit 18
+  endif
+endif
+
+set CONSEGNA_NUM = `cat ${CONSEGNA_FILE_BACKUP}`
+set CONSEGNA = "${CONSEGNA_AMBIENTE}${CONSEGNA_NUM}"
+set TAR_IFACE_FILE = "${TAR_DIR}/${CONSEGNA}.ifc"
+set TAR_SISO_FILE = "${TAR_DIR}/${CONSEGNA}.siso"
+set TAR_FMX_FILE = "${TAR_DIR}/${CONSEGNA}.fmx"
+set TAR_WKS_FILE = "${TAR_DIR}/${CONSEGNA}.wks"
+
+
+#**********************************************************************
+# Se e' stato estratto software per siso, ne faccio un tar a parte; in
+# caso sia presente, verifico anche se sono state estratte delle
+# interfacce e in caso affermativo ne faccio un tar a parte.
+#**********************************************************************
+if (-d ${SWD_ROOT}/${AMBIENTE}/u ) then
+  /sbin/mknod ${TAR_SISO_FILE} p
+  compress < ${TAR_SISO_FILE} > ${TAR_SISO_FILE}.Z &
+  tar cvf ${TAR_SISO_FILE} -C ${SWD_ROOT}/${AMBIENTE}/u/dsim ./sql ./frm ./bin ./siso ./she
+  if (-d ${SWD_ROOT}/${AMBIENTE}/u/dsim/fmx ) then
+    /sbin/mknod ${TAR_FMX_FILE} p
+    compress < ${TAR_FMX_FILE} > ${TAR_FMX_FILE}.Z &
+    tar cvf ${TAR_FMX_FILE} -C ${SWD_ROOT}/${AMBIENTE}/u/dsim ./fmx
+  endif
+  if (-d ${IFACE_DIR}/${AMBIENTE}/u) then
+  echo "IFACE"
+    /sbin/mknod ${TAR_IFACE_FILE} p
+    compress < ${TAR_IFACE_FILE} > ${TAR_IFACE_FILE}.Z &
+    tar cvf ${TAR_IFACE_FILE} -C ${IFACE_DIR}/${AMBIENTE}/u/dsim ./
+  endif
+endif
+
+#**********************************************************************
+# Ricerco tra le altre directory quelle che fanno parte del software 
+# delle ws.
+#**********************************************************************
+set elenco = `ls ${SWD_ROOT}/${AMBIENTE}`
+foreach elemento ($elenco)
+  if (-d ${SWD_ROOT}/${AMBIENTE}/${elemento} ) then
+    if (${elemento} != u ) then
+      if (-f ${TAR_WKS_FILE} ) then
+	tar rvf ${TAR_WKS_FILE} -C ${SWD_ROOT}/${AMBIENTE} ./${elemento}
+      else
+	tar cvf ${TAR_WKS_FILE} -C ${SWD_ROOT}/${AMBIENTE} ./${elemento}
+      endif
+    endif
+  endif
+end
+if (-f ${TAR_WKS_FILE}) then
+  compress ${TAR_WKS_FILE}
+endif
+
+#**********************************************************************
+# Genero l'elenco dei tar da mettere nel log del task
+#**********************************************************************
+set LISTA_TAR = ""
+if (-f ${TAR_SISO_FILE}.Z) then
+  set LISTA_TAR = "${LISTA_TAR} ${CONSEGNA}.siso"
+endif
+if (-f ${TAR_FMX_FILE}.Z) then
+  set LISTA_TAR = "${LISTA_TAR} ${CONSEGNA}.fmx"
+endif
+if (-f ${TAR_IFACE_FILE}.Z) then
+  set LISTA_TAR = "${LISTA_TAR} ${CONSEGNA}.ifc"
+endif
+if (-f ${TAR_WKS_FILE}.Z) then
+  set LISTA_TAR = "${LISTA_TAR} ${CONSEGNA}.wks"
+endif
+
+echo ${LISTA_TAR} > ${RESPONSE_FILE}
+
+#**********************************************************************
+# Incremento il contatore della consegna
+#**********************************************************************
+set NEW_CONSEGNA = `echo ${CONSEGNA_NUM} | awk '{ printf "%.5d",++$1 }'`
+echo ${NEW_CONSEGNA} > ${CONSEGNA_FILE_BACKUP}
+mv ${CONSEGNA_FILE_BACKUP} ${CONSEGNA_FILE}
+
+#**********************************************************************
+# Creo un batch per avere la possibilita' di eseguire direttamente o
+# a posteriori la fase di copia in remoto.
+#**********************************************************************
+#cat > ${CCM45_DBlog}/RCP_SISO.BAT <<EndOfInput1
+#!/bin/csh
+#if (${AMBIENTE} == PRD) then
+#  if (-d ${SWD_ROOT}/${AMBIENTE}/${elemento}) then
+#    if (-f ${TAR_SISO_FILE}) then
+#      remsh p-gpm2-c -l dsim "rcp c-gpm2-c:${TAR_SISO_FILE} ${DSIM_TEMP_DIR}"
+#    endif
+#    if (-f ${TAR_FMX_FILE}) then
+#      remsh p-gpm1-c -l dsim "rcp c-gpm2-c:${TAR_FMX_FILE} ${FMX_DEST_DIR}"
+#    endif
+#    if (-f ${TAR_IFACE_FILE}) then
+#      remsh p-gpm1-c -l dsim "rcp c-gpm2-c:${TAR_IFACE_FILE} ${IFACE_DEST_DIR}"
+#    endif
+#  endif
+#else
+#  if (-f ${TAR_SISO_FILE}) then
+#    remsh c-gpm2-c -l dsim "cp ${TAR_SISO_FILE} ${DSIM_DEST_DIR}"
+#  endif
+#  if (-f ${TAR_FMX_FILE}) then
+#    remsh c-gpm2-c -l dsim "cp ${TAR_FMX_FILE} ${DSIM_DEST_DIR}"
+#  endif
+#  if (-f ${TAR_IFACE_FILE}) then
+#    remsh c-gpm2-c -l dsim "cp ${TAR_IFACE_FILE} ${IFACE_DEST_DIR}"
+#  endif
+#endif
+#EndOfInput1
+#chmod 744 ${CCM45_DBlog}/RCP_SISO.BAT
+  
+exit 0

@@ -1,0 +1,72 @@
+#!/bin/csh 
+#***********************************************************************
+#                   CloseMig_Fix 
+#
+# Goal: Lanciato alla checkin del Task assegnato a chk_dtm per estrarre 
+#	una consegna FIX.      
+#
+# Parametri passati: $1 codice_opzione
+#                    $2 task_subsys
+#                    $3 comitver
+#                    $4 task_number
+#                    $5 task_synopsis
+#                    $6 creator
+#                    $7 resolver
+#
+# Author: Brizzolara Luca November 1999
+# Modified Luciano Giovannini Apr 2000.
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"   
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"   
+
+# **********************************************************************
+# Controllo il codice opzione                                           
+# **********************************************************************
+if ($1 != "Migraz.Fix" && $1 != "Compilaz.Fix") then
+  exit 0
+endif                                                                
+
+# **********************************************************************
+# Controllo che il resolver sia corretto                                
+# **********************************************************************
+                                                                        
+if ($7 != chk_dtm) then                                                 
+  exit 0                                                                
+endif
+
+                                                                   
+# ********************************************************************** 
+# Controllo se e' gia in corso un'altra estrazione FIX                   
+# ********************************************************************** 
+if (-f ${CCM45_DBlog}/SWD_UPDATE.FIX.LOCK) then                              
+  echo "MSG:ATTENZIONE e' gia' in corso una Estrazione per $2"           
+  echo "MSG: "                                                           
+  echo "MSG:Operazione Annullata.Il Task rimarra' assegnato"             
+  exit 1                                                                 
+endif
+                                                                    
+# ********************************************************************** 
+# Verifica completamento di tutti i task relativi alla consegna
+# ********************************************************************** 
+setenv CCM_ADDR `ccm start -m -q -nogui -r ccm_admin -d ${CCM45_DB}`
+
+                                                                                                
+  if (`ccm query "cvtype='task' and task_subsys='$2' and comitver='$3' and resolver='cm_sesi' and (status='task_assigned' or status='registered')" | grep -c task`) then
+   echo "MSG:Operazione respinta! Consegna $2$3 NON pronta"  
+   echo "Consegna $2$3 NON pronta per FIX" >>&/$CCM45_DBlog/ErrMsg 
+   ccm stop
+   exit 1
+  endif
+
+# ********************************************************************** 
+# Lancia UpFldFix_script che creera' i task ghost e un task da assegnare a
+# cm_sesi per eseguire l'estrazione della FIX in Produzione.              
+# **********************************************************************  
+                                                                          
+${EXE_DIR}/UpFldFix_script $1 $2 $3 $4 $7 &
+
+ccm stop                
+
+exit 0 

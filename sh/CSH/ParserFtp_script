@@ -1,0 +1,101 @@
+#!/bin/csh
+
+#***********************************************************************
+#*
+#*                    ParserFtp_script 
+#*
+#* Goal: determina quali applicazioni abbiano avuto delle consegne
+#*       estratte, chiamando le opportune routine di ftp e creazione
+#*       di comandi per l'installazione ad host delle applicazioni.
+#*
+#* Parametri passati: $1 SWD_ROOT (tipicamente /usr/CONT_SRV/SWD_WEB
+#*                    $2 AMBIENTE (SQA o PRD)
+#*
+#* Author: Luca Brizzolara, Luciano Giovannini Mar 2000
+#*
+#***********************************************************************
+
+set CCMDB = "/usr/CONT_SRV/ccmdb/DB_WEB"
+set SCRIPT_DIR = "${CCMDB}/lib/notify/Unix"
+set BATCH_DIR = "${CCMDB}/lib/notify/FtpBatch"
+set LOG_DIR = "${CCMDB}/lib/notify/log"
+set SWD_ROOT = $1
+set AMBIENTE = $2
+set RESPONSE_FILE = "${SWD_ROOT}/${AMBIENTE}/response.txt"
+set INIFILE = "${SCRIPT_DIR}/ParserFtp.ini"
+ 
+if (-f ${RESPONSE_FILE} ) then
+  rm -f ${RESPONSE_FILE}
+endif
+ 
+if ( ! -r "${INIFILE}" )  then
+  echo "MSG: non posso leggere il file ${INIFILE}" >> ${RESPONSE_FILE}
+  exit 14
+endif
+
+if (`cat ${INIFILE} |grep CONSEGNA_FILE_PREFIX|wc -l` != 0) then
+  set CONSEGNA_FILE_PREFIX = `cat ${INIFILE} |grep CONSEGNA_FILE_PREFIX |awk -F= '{ print $2 }'`
+else
+  echo "MSG:la variabile CONSEGNA_FILE_PREFIX non e' presente nel file ini." >> ${RESPONSE_FILE}
+  exit 15
+endif
+
+echo "ParserZip_script: variabili file ini ok" 
+
+
+#***********************************************************************
+#* Cerco il numero di consegna corrente. Alla fine verifichero' se ho
+#* fatto degli zip e, in caso affermativo, aumentero' il numero contenuto
+#* nel file consegna corrispondente. Eseguo questa parte solo dopo avere
+#* verificato di avere degli zip da fare.
+#***********************************************************************
+
+set CONSEGNA_FILE = ${CONSEGNA_FILE_PREFIX}.${AMBIENTE}
+if ( ! -r ${CONSEGNA_FILE} ) then
+  echo "Non posso leggere il ${CONSEGNA_FILE}" >> ${RESPONSE_FILE}
+  exit 16
+endif
+
+set CONSEGNA_FILE_BACKUP = ${CONSEGNA_FILE}.backup
+mv ${CONSEGNA_FILE} ${CONSEGNA_FILE_BACKUP}
+if (${status}) then
+  echo "Non posso rinominare il file CONSEGNA_FILE." >> ${RESPONSE_FILE}
+  echo "Un altro processo potrebbe averlo in uso." >> ${RESPONSE_FILE}
+  exit 17
+endif
+
+set CONSEGNA_NUM = `cat ${CONSEGNA_FILE_BACKUP}`
+ 
+set ELENCO_PROJECTS = `ls ${SWD_ROOT}/${AMBIENTE}`
+ 
+foreach DIR (${ELENCO_PROJECTS})
+#***********************************************************************
+# Avremo directory uguale a progetto in minuscolo per tutti i progetti
+# tranne che per i servizi dove a SERVIZI deve corrispondere S_W
+#***********************************************************************
+  if ( ${DIR} != txt ) then
+    if ( ${DIR} == "servizi" ) then
+      set PROGETTO = "S_W"
+    else
+      set PROGETTO = `echo ${DIR} |awk '{ print toupper($1) }'`
+    endif
+#***********************************************************************
+# Lancio la script di creazione dei comandi
+#***********************************************************************
+    ${SCRIPT_DIR}/CreaBatch_script ${SWD_ROOT} ${AMBIENTE} ${BATCH_DIR} ${PROGETTO} ${CONSEGNA_NUM} ${DIR}
+#***********************************************************************
+# Lancio la script per realizzare l'ftp su directory di appoggio.
+#***********************************************************************
+    ${SCRIPT_DIR}/ftp_script ${SWD_ROOT} ${AMBIENTE} ${BATCH_DIR} ${PROGETTO} ${CONSEGNA_NUM} ${DIR}
+  endif
+end
+
+#***********************************************************************
+#* Si deve incrementare comunque il contatore di estrazione. 
+#***********************************************************************
+
+set NEW_CONSEGNA = `echo ${CONSEGNA_NUM} | awk '{ printf "%.5d",++$1 }'`
+echo ${NEW_CONSEGNA} > ${CONSEGNA_FILE_BACKUP}
+mv ${CONSEGNA_FILE_BACKUP} ${CONSEGNA_FILE}
+
+exit 0

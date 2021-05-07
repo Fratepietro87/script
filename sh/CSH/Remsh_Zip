@@ -1,0 +1,145 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                  Remsh_Zip
+#*
+#*
+#* Author: Brizzolara Luca 1998
+#* Modificato: Romanini Barbara dicembre 1998
+#* Parametri: $1  ZIP_CHAR (il drive in maiuscolo)
+#*            $2  PROGETTO
+#*            $3  CONSEGNA_NUM3
+#*            $4  SWDIR_PREFIX_AIX
+#*            $5  SWDIR_PREFIX_OS2
+#*            $6  FILE_SERVER
+#*            $7  OUTDIR_PREFIX_OS
+#*            $8  DIR_BASE
+#*            $9  CONSEGNA
+#*            $10 LISTA (es. /usr/CONT_SRV/SWD_NTS/CSU/db_notes.txt)
+#*            $11 /usr/CONT_SRV/SWD_NTS/AMBIENTE (Romanini - 24/12/1999)
+#*  A seguire ci sono gli argomenti, in numero variabile, passati alla
+#*  presente script da "xargs", che sono i files db notes estratti.
+#***********************************************************************
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set ZIP_CHAR = $1
+set DRIVE = `echo $1 |awk '{ print tolower($1) }'`
+set PROGETTO = $2
+set CONSEGNA_NUM3 = $3
+set SWDIR_PREFIX_AIX = $4
+set SWDIR_PREFIX_OS2 = $5
+set FILE_SERVER = $6
+set OUTDIR_PREFIX_OS = $7
+set DIR_BASE = $8
+set CONSEGNA = $9
+set LISTA = $10
+#***********************************************************************
+#* Imposto le variabili per response.txt e response.txt.new 
+#* da utilizzare per impostare il task-log - Romanini 24/12/1999 
+#***********************************************************************
+set RESPONSE_FILE = $11"/"response.txt
+set NEW_RESPONSE_FILE=${RESPONSE_FILE}".new"
+
+
+# **********************************************************************
+# File system structure check
+# **********************************************************************
+
+# **********************************************************************
+# Questa script e' chiamata,tramite xargs, dalla script ccmzip_script.
+# xargs prende in input uno o piu' argomenti tutti insieme e li smista,
+# uno per volta, al comando successivo: nel DoMig_script di DB_NTS, si esegue
+# una "find" dei files da comprimere, che, tramite pipe, vengono passati a 
+# xargs, che a sua volta li passa uno per volta al comando "compress".
+#
+# xargs permette anche di passare un numero variabile di argomenti.
+# E' questo secondo uso di xargs che qui interessa.
+# Ad es. ccmzip_script chiama la presente script passandole un numero fisso di 
+# parametri ($1, $2, $3 ecc.) e un numero variabile di parametri, che sono
+# il risultato (variabile) di un comando "find" (vedere la chiamata di ccmzip_script
+# a Remsh_Zip). 
+# In pratica ccmzip_script chiama Remsh_Zip passandole anche i db notes da zippare ,
+# che sono in numero variabile.
+# - Commento di Romanini - 09 Febbraio 2000 
+# **********************************************************************
+
+
+
+# **********************************************************************
+# Il ciclo che segue scandisce, tramite "shift", la variabile "argv",  
+# in cui ci sono ,oltre ai parametri fissi, tutti gli argomenti passati a "xargs",
+# nel ccmzip_script, e che a sua volta, xargs passa a Remsh_Zip.
+# In "argv" ci sono prima tutti i parametri fissi ($1,$2,ecc..) e, di seguito, tutti gli
+# altri parametri, che sono in numero variabile.
+# Tramite "shift" ripetuta 11 volte, che e' il numero dei parametri fissi, in argv 
+# rimangono solo gli altri (quelli in numero variabile).
+# Questi ultimi, che sono poi i db notes da zippare, vengono considerati uno per uno nel ciclo
+# che c'e' piu' sotto ("while ($#argv != 0)...")
+# - Commento di Romanini - 09 Febbraio 2000 
+# **********************************************************************
+
+set n = 0
+while ($n != 11)
+  shift
+  set n = `expr $n + 1`
+end
+
+set ALFABETO = "A B C D E F G H I J K L M N O P Q R S T U V W Y X Z"
+set NUMERO = "00"
+set LETTERA = "A"
+
+while ($#argv != 0)
+  if (${NUMERO} == "99") then
+    set NUMERO = "00"
+    set LETTERA = `echo ${ALFABETO} | awk -F ${LETTERA} '{ print $2 }' |awk -F " " '{ print $1 }'`
+  else
+    set NUMERO = `expr ${NUMERO} + 1`
+    if (${NUMERO} < 10) then
+      set NUMERO = "0${NUMERO}"
+    endif
+  endif
+  set PROGRESSIVO_ZIP = ${LETTERA}${NUMERO}
+  set ZIP_NAME = "S${PROGETTO}${CONSEGNA_NUM3}${ZIP_CHAR}.${PROGRESSIVO_ZIP}"
+  set ZIP_FILE = "${OUTDIR_PREFIX_OS}\${CONSEGNA}\dbnotes\${ZIP_NAME}"
+  set ZIP_BASE_DIR = `echo ${DIR_BASE} |awk -F"${SWDIR_PREFIX_AIX}" '{ print $2 }' | awk '{gsub("\/","\\");print $0 }'`
+  set ZIP_SOURCE = `echo $1 |awk '{ gsub("\/","\\");print $0 }'`
+  remsh ${FILE_SERVER} "${SWDIR_PREFIX_OS2} & cd ${ZIP_BASE_DIR} & pkzip25 /add /nozipextension /path=current ${ZIP_FILE} ${ZIP_SOURCE}"
+  if (${status}) then
+    echo "Errore nello zip di $1" >> ${LISTA}
+  else
+    echo "${ZIP_NAME} ${ZIP_CHAR}:/$1" >> ${LISTA}
+  endif
+  shift
+end
+
+
+
+###############################################################################
+#* Nel response file il numero di zip dei DB Notes prodotti - Romanini 24-12-99
+###############################################################################
+
+
+if ( -f ${LISTA} ) then
+  set NUM_DBNOTES = `cat ${LISTA} |wc -l`
+  echo "Zip DB Notes:${NUM_DBNOTES}" > ${NEW_RESPONSE_FILE}
+endif
+
+##############################################################################
+#* Scarico i log temporanei sul file di log "ufficiale" - Romanini 24-12-99 
+##############################################################################
+
+if (-f ${NEW_RESPONSE_FILE}) then
+  cat ${NEW_RESPONSE_FILE} >> ${RESPONSE_FILE}
+  rm ${NEW_RESPONSE_FILE}
+endif
+
+
+exit 0
+
+##############################################################################
+#       End of procedure
+##############################################################################
+

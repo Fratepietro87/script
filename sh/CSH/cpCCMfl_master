@@ -1,0 +1,179 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* Copy from WorkArea IBM AIX CSHELL Script for COMIT 
+#*
+#* This script is a funcion call. XARGS listing file-system structure.
+#*
+#* xargs cpCCMfl_script SWD_ROOT WA_ROOT SCForCAS.. CSUorSQAorPRD
+#*
+#* Author: Cavana Carlo 1998
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Parametri passati da UpFldSWD_script:                                        
+#
+# SWD_ROOT ($1): /usr/CONT_SRV/SWD_FIL                                         
+# WA_ROOT ($2): /usr/CONT_SRV/ccm_wa/DB_FIL                                    
+# $3: progetto (SCF, CAS, PDD ecc.)                                            
+# $4: ambiente (CSU, SQA, PRD)                                                 
+#                                                                              
+# Oltre a parametri fissi vengono passati a cpCCMfl_master, tramite            
+# xargs, la lista degli oggetti (in numero variabile), con versione, presenti  
+# nel progetto che si sta esaminando (cpCCMfl_master viene chiamato entro un   
+# ciclo sui progetti).                                                         
+#                                                                              
+# - commento di Romanini -                                                     
+# **********************************************************************
+
+
+# **********************************************************************
+# Imposta la directory di destinazione dell'estrazione: ad es.  
+# /usr/CONT_SRV/SWD_FIL/SQA                                     
+# - commento di Romanini -                                      
+# **********************************************************************
+
+set root_dest = $1/$4
+
+
+
+# **********************************************************************
+# Imposta la work area per il progetto in esame: ad es.   
+# /usr/CONT_SRV/ccm_wa/DB_FIL/CAS~SQA/CAS                 
+# - commento di Romanini -                                
+# **********************************************************************
+
+set wa = $2/$3~$4/$3
+
+
+
+# *********************************************************************************************
+# La variabile argv ,in questo punto, contiene, nell'ordine:                                      
+# il primo parametro, cioe' /usr/CONT_SRV/SWD_FIL                                                 
+# il secondo parametro, cioe' /usr/CONT_SRV/ccm_wa/DB_FIL                                         
+# il terzo parametro, cioe' il progetto (SCF, CAS, PDD ecc.)                                      
+# il quarto parametro, cioe' l'ambiente (CSU, SQA, PRD)                                           
+# la lista degli oggetti con la loro versione e il loro path sul database                         
+# (es. TLX/c/su_srv/ico/tlxmtc.ico~1) in cui ciascuna stringa e' separata da uno spazio.          
+# Il numero totale degli argomenti ($#argv) e' quattro + il numero degli oggetti del progetto.    
+# La "shift" che segue sposta il puntatore agli argomenti di un posto verso destra,               
+# "tagliando fuori" il primo parametro, cioe' /usr/CONT_SRV/SWD_FIL.                              
+# $#argv si e' decrementato di uno.                                                               
+# - commento di Romanini -                                                                        
+# *********************************************************************************************
+
+shift
+
+
+# *********************************************************************************************
+# Inizia un ciclo che scandisce gli argomenti restanti.   
+# - commento di Romanini -                                
+# *********************************************************************************************
+
+while ($#argv != 0)
+
+
+# *********************************************************************************************
+# Di seguito vengono impostate diverse variabili, tra cui "dest", in cui compare $1.              
+# In questo ciclo $1 e' il primo parametro ,di volta in volta diverso, perche'                    
+# c'e' uno "shift" in ciclo (vedi in fondo).                                                      
+# Esso e' un argomento presente in argv, cioe' ogni parametro                                     
+# (tranne il primo,scartato dalla shift fuori ciclo) e ogni argomento variabile.                  
+# Ad es. (l'esempio non rispecchia esattamente i parametri di questo script, ma quasi),           
+# se la stringa completa dei parametri (argv) e':                                                 
+# "SQA TLX/TLX10000.txt~1 TLX/c/su_srv/ico/tlxmtc.ico~1 TLX/c/dianaini/root/45apser/tlxmtc.ini~1" 
+# al primo giro $1 vale SQA e dest e' vuota                                                       
+# al secondo giro $1 vale TLX/TLX10000.txt~1 e dest vale TLX10000.txt                             
+# al terzo giro $1 vale TLX/c/su_srv/ico/tlxmtc.ico~1 e dest vale c/su_srv/ico/tlxmtc.ico         
+# ecc.                                                                                            
+# Si nota che l'awk presente nella definizione di dest, considera la parte di stringa,            
+# presente in $1, rifacendosi al primo caso dell'esempio, compresa tra "TLX/" e "~".              
+#                                                                                                 
+# La variabile "sep" contiene il numero dei separatori "/" presenti nella "dest" definita:        
+# in base all'esempio precedente:                                                                 
+# al primo giro "sep" e' vuota                                                                    
+# al secondo giro "sep" vale 0                                                                    
+# al terzo giro "sep" vale 3                                                                      
+# La variabile "rootsep" contiene il numero dei separatori "/" presenti nella variabile           
+# "root_dest", fissa, e impostata all'inizio della presente script che e' ad es.                  
+# /usr/CONT_SRV/SWD_FIL/SQA.                                                                      
+# In base all'esempio precedente "rootsep" vale sempre 4.                                         
+# - commento di Romanini -                                                                        
+# *********************************************************************************************
+
+
+  set dest = `echo $1 | awk '{print substr($1,index($1,"/")+1,index($1,"~")-index($1,"/")-1)}'`
+  set sep = `echo ${dest} | awk '{print gsub("/","",$1)}'`
+  set rootsep = `echo ${root_dest} | awk '{print gsub("/","",$1)}'`
+
+
+  set i = ${rootsep} 
+
+# *********************************************************************************************
+# "i" contiene il numero dei separatori "/" presenti nella variabile "root_dest", fissa            
+# (es. /usr/CONT_SRV/SWD_FIL/SQA). E' uguale a "rootsep".                                          
+# - commento di Romanini -                                                                         
+# *********************************************************************************************
+                                                                                                   
+# *********************************************************************************************
+# Finche' (while) "i" rimane minore o uguale a "rootsep" + "sep", si esegue la concatenazione      
+# tra "root_dest" (es. /usr/CONT_SRV/SWD_FIL/SQA) e "dest":                                        
+# se "dest" e' un file senza path (es. TLX10000.txt),allora il risultato della concatenazione,     
+# posto nella variabile "cur_dir" e' la directory contenuta in "root_dest"                         
+# (es. /usr/CONT_SRV/SWD_FIL/SQA)                                                                  
+# se "dest" e' un file con il suo path (es. c/su_srv/ico/tlxmtc.ico), allora "sep" e' >0           
+# e il ciclo viene eseguito piu' volte:                                                            
+# ad ogni giro si concatena alla directory base di estrazione (es. /usr/CONT_SRV/SWD_FIL/SQA)      
+# ogni directory del path in esame, si controlla che esista , se non esiste la si crea.            
+# Ad es. :                                                                                         
+# primo giro : cur_dir = /usr/CONT_SRV/SWD_FIL/SQA (la directory esiste e non viene creata)        
+# secondo giro : cur_dir = /usr/CONT_SRV/SWD_FIL/SQA/c                                             
+#                (la directory non esiste e viene creata con mkdir)                                
+# terzo giro : cur_dir = /usr/CONT_SRV/SWD_FIL/SQA/c/su_srv                                        
+#                (la directory non esiste e viene creata con mkdir)                                
+# quarto giro : cur_dir = /usr/CONT_SRV/SWD_FIL/SQA/c/su_srv/ico                                   
+#                (la directory non esiste e viene creata con mkdir)                                
+#   Fine                                                                                           
+# - commento di Romanini -                                                                         
+# *********************************************************************************************
+
+
+  while ($i <= (${rootsep} + ${sep}))
+    @ i++
+    set cur_dir = `echo ${root_dest}/${dest} | cut -d/ -f1-$i`
+    if !(-d ${cur_dir}) then
+      echo mkdir ${cur_dir} 
+      mkdir ${cur_dir} 
+      chmod a+w ${cur_dir} 
+    endif
+  end
+
+# *********************************************************************************************
+# Se nella work-area (es. /usr/CONT_SRV/ccm_wa/DB_FIL/TLX~SQA/TLX) c'e' il file che             
+# interessa, con il suo path(es. c/su_srv/ico/tlxmtc.ico),                                      
+# e se (seconda if) il file non e' ne' README.* ne' DPDD.SQL,DCRS.SQL,DGIO.SQL,FIT.TXT          
+# allora copia dalla wa alla dir. di estrazione.                                                
+# Se invece il file e' README.*,DPDD.SQL ecc. , allora manda il messaggio di "skip" (salta).    
+# - commento di Romanini -                                                                      
+# *********************************************************************************************
+
+  if (-f ${wa}/${dest}) then
+    if (`echo $1 | grep -i "README."` != '' || `echo $1 | grep -i "DPDD.SQL"` != '' ||`echo $1 | grep -i "DCRS.SQL"` != '' || `echo $1 | grep -i "DGIO.SQL"` != '' || `echo $1 | grep -i "FIT.TXT"` != '' ) then
+      echo skipp \[ ${wa}/${dest} \] 
+    else 
+      echo copio from \[ ${wa}/${dest} \] to \[ ${root_dest}/${dest} \]
+      cp -f ${wa}/${dest} ${root_dest}/${dest}
+      chmod a+w ${root_dest}/${dest}
+    endif
+  endif
+  shift
+                                                                                         
+# *********************************************************************************************
+# Con i due cicli , esterno e interno, si costruisce il path di estrazione completo,     
+# per tutti i files passati come argomenti alla script e li si copia (tranne readme.*,   
+# dpdd.sql ecc) dalla work-area alla directory di estrazione.                            
+# - commento di Romanini -                                                               
+# *********************************************************************************************
+
+end

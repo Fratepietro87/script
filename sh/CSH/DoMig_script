@@ -1,0 +1,797 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#* Migration IBM AIX CSHELL Script for COMIT Consegne
+#*
+#* Author: Cavana Carlo 1998
+#* Modified: Capanei Magda May 1999
+#* Modified: Brizzolara Luca June 1999
+#*
+#***********************************************************************
+
+#***********************************************************************
+# Controllo del codice opzione
+#***********************************************************************
+
+if ($1 != "Migraz.Consegna" ) then
+    exit 0
+endif
+
+#***********************************************************************
+# Settaggio variabili di ambiente.
+#***********************************************************************
+ 
+set PROGETTO = $2
+set COMITVER = $3
+set Ntask = $4
+set REL = ${PROGETTO}${COMITVER}
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+set VER = `echo ${REL} | awk '{print substr($1,1,5)}'`
+set REMOTE_MIG_ROOT = "/Consegne/MIG_DB_FIL"
+set REMOTE_HP_MIG_DIR = "/LocalCons/LOCAL_FIL"
+set MIG_LOCAL_ROOT = "/usr/CONT_SRV/LOCAL_FIL"
+set WA_ROOT  = "/usr/CONT_SRV/ccm_wa/DB_FIL"
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set CCM45_DBlog2 = "${CCM45_DB}/lib/notify/archivio_log"
+set SCRIPT_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CNF_DIR = "${CCM45_DB}/lib/notify/cnf"
+set COMMON_DIR = "${SCRIPT_DIR}/COMMON"
+set ListaDeltaWSOD = "${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/$progetto${COMITVER}.wsd"
+set ListaAmbiente = "${CCM45_DBlog}/WSOD.MIG"
+set ListaDeltaTemp = "${CCM45_DBlog}/wsod_delta.mig"
+set ListaWarning = "${CCM45_DBlog}/warning.mig"
+
+
+#*************************************************************
+# Controllo che l'utente sia quello corretto.
+#*************************************************************
+if ($6 != mig_sa ) then
+  echo "MSG:$6 NON abilitato a Migrare del SW."
+  echo "MSG:  "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+#***********************************************************************
+# Copio la consegna in locale
+#***********************************************************************
+if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} ) then
+  rm -rf ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}
+endif
+remsh linux_cm -l root -n "cd ${REMOTE_MIG_ROOT}; cp -r ${PROGETTO}${COMITVER} ${REMOTE_HP_MIG_DIR}"
+
+#***********************************************************************
+# Controllo che la consegna esista e che non sia gia' stata migrata.
+#***********************************************************************
+${COMMON_DIR}/CheckConsegna ${MIG_LOCAL_ROOT} ${CCM45_DBlog} ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La consegna ${PROGETTO}${COMITVER} non esiste"
+  else
+    echo "MSG:La consegna ${PROGETTO}${COMITVER} e' gia' stata migrata"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo cha la comitver sia corretta ed incrementale.
+# Nel caso non sia incrementale, in ${TempFileParametri} ho il nome
+# dell'ultima consegna migrata per il progetto.
+# I codici di ritorno sono:
+# - 0 per COMITVER ok;
+# - 1 per COMITVER non lunga 5 caratteri
+# - 2 per COMITVER numericamente non incrementale per il ${PROGETTO}
+# - 3 per COMITVER formalmente non corretta.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+cat /dev/null > ${TempFileParametri}
+
+${COMMON_DIR}/CheckComitver ${CCM45_DBlog} ${TempFileParametri} ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nell'inserimento dei parametri"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La comitver inserita non e' di 5 caratteri"
+  else
+    if ( ${ESITO} == 2 ) then
+      set LastNumber = `cat ${TempFileParametri}`
+      set LastConsegna = "${PROGETTO}${LastNumber}"
+      echo "MSG:La consegna ${PROGETTO}${COMITVER} non ha una numerazione"
+      echo "MSG:incrementale per il progetto ${PROGETTO}"
+      echo "MSG:Ultima consegna migrata: ${LastConsegna}"
+    else
+      echo "MSG:La comitver inserita ha un formato non conforme alle regole"
+    endif
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm ${TempFileParametri}
+  goto bad_task
+endif
+
+rm ${TempFileParametri}
+
+
+
+#***********************************************************************
+# Converto in minuscolo le directory della consegna.
+#***********************************************************************
+find ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} -type d -depth |xargs ${COMMON_DIR}/ConvertiUnix ${MIG_LOCAL_ROOT} ${PROGETTO} ${COMITVER}
+
+if (${status}) then
+  echo "MSG:Problemi nell'esecuzione del converti."
+  echo "MSG:Verificare permessi e mount di file_system."
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Converto in minuscolo i file della consegna.
+#***********************************************************************
+find ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} -type f |xargs ${COMMON_DIR}/ConvertiUnix ${MIG_LOCAL_ROOT} ${PROGETTO} ${COMITVER}
+
+if (${status}) then
+  echo "MSG:Problemi nell'esecuzione del converti."
+  echo "MSG:Verificare permessi e mount di file_system."
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo che esista e sia leggibile la tabella da utilizzare poi
+# nel CheckAlberaturaConsegna. I codici di ritorno sono:
+# - 0 tutto ok
+# - 1 non esiste la tabella
+# - 2 la tabella non e' leggibile
+# In ogni caso in ${TempFileParametri} viene restituito il nome
+# della tabella.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+cat /dev/null > ${TempFileParametri}
+
+${COMMON_DIR}/CheckTabella ${COMMON_DIR} ${TempFileParametri}
+set ESITO = ${status}
+
+set NomeTabella = `cat ${TempFileParametri}|head -n 1`
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella lettura dei dati"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La tabella ${NomeTabella} non esiste"
+  else
+    echo "MSG:La tabella ${NomeTabella} esiste,"
+    echo "MSG:ma ccm_root non ha su di essa i permessi di lettura"
+  endif
+  echo "MSG: "
+  echo "MSG:Contattare il CM per la risoluzione del problema"
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm ${TempFileParametri}
+  goto bad_task
+endif
+
+#***********************************************************************
+# Controllo di alberatura per la consegna; i codici di ritorno sono:
+# - 0 per consegna conforme per struttura alle regole;
+# - 1 se manca una variabile nella tabella
+# - 2 per consegna con alberatura non corretta.
+# Nel caso di variabile mancante in tabella, restituisce il nome di
+# tale variabile in TempFileParametri. Nel caso di alberatura non corretta
+# restituisce in TempFileParametri il nome del file o directory non
+# conforme alle regole. La script esce al primo errore riscontrato.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+cat /dev/null > ${TempFileParametri}
+
+${COMMON_DIR}/CheckAlberaturaConsegna ${MIG_LOCAL_ROOT} ${TempFileParametri} ${PROGETTO} ${COMITVER} ${COMMON_DIR} ${NomeTabella}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  set ElementoErrato = `cat ${TempFileParametri}`
+  echo "MSG:Errore nella struttura della consegna"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:La variabile ${ElementoErrato} non e' definita"
+  else
+    echo "MSG:Il file o directory ${ElementoErrato}"
+    echo "MSG:ha un path errato"
+  endif
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm ${TempFileParametri}
+  goto bad_task
+endif
+
+rm ${TempFileParametri}
+
+#***********************************************************************
+# Verifico che non ci siano troppe migrazioni in corso (limito a tre il
+# numero di migrazioni contemporanee per ragioni di efficienza).
+# Verifico poi, che non sia in corso un'altra migrazione che coinvolge
+# lo stesso progetto.
+#***********************************************************************
+${COMMON_DIR}/CheckNumMigrazioni ${CCM45_DBlog} ${PROGETTO}
+set ESITO = ${status}
+
+if ( ${ESITO} != 0 ) then
+  echo "MSG:Errore nella procedura"
+  if ( ${ESITO} == 1 ) then
+    echo "MSG:sono in corso troppe migrazioni. Riprovare piu' tardi"
+  else
+    echo "MSG:E' gia' in corso una migrazione per ${PROGETTO}"
+  endif
+  echo "MSG:Se il problema persiste, contattare ufficio CM"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm ${TempFileParametri}
+  goto bad_task
+endif
+
+
+#***********************************************************************
+# Check BND directory - Capanei - start
+#***********************************************************************
+if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/BND) then
+  if (!(-f ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${PROGETTO}${COMITVER}.LST) || !(-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/BND/server/d/instdb/bind)) then
+    echo "MSG:Non esiste il file ${PROGETTO}${COMITVER}.LST oppure non si chiama come la consegna oppure non esiste la directory ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/BND/server/d/instdb/bind"
+    echo "MSG:  " 
+    echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+    echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg 
+    goto bad_task
+  else
+    ls -l ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/BND/server/d/instdb/bind/*.bnd | awk '{print $9}' | awk -F"bind/" '{print $ 2}'| awk -F. '{print toupper($1)}' > /tmp/elenco
+    set fnd = `cat /tmp/elenco`
+    set fndnum = `echo $#fnd`
+    set i = 0
+    while ($i < ${fndnum})
+      @ i++
+      if !(`echo ${fnd[$i]} | xargs -i grep -c {} ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${PROGETTO}${COMITVER}.LST`) then
+        set name = ${fnd[$i]}
+    	echo "MSG:Non e' stato trovato il file ${name}.bnd"
+    	echo "all'interno del file ${PROGETTO}${COMITVER}.LST"
+    	echo "MSG:  " 
+    	echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+    	echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg 
+    	goto bad_task
+      endif
+    end
+  endif
+endif
+
+#***********************************************************************
+# Check BND directory - Capanei - end
+#***********************************************************************
+
+
+#***********************************************************************
+# Verifico la correttezza dei prerequisiti; i codici di ritorno sono:
+# - 0 se e' tutto ok (in ${TempFileParametri} trovo la lista dei
+#     prerequisiti che sono stati inseriti, se ce ne sono)
+# - 1 se la lista non e' formalmente corretta
+# - 2 se uno dei prerequisiti non e' stato ancora migrato.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+set LogFileErrori = "${CCM45_DBlog}/LogFileErrori"
+cat /dev/null > ${TempFileParametri}
+cat /dev/null > ${LogFileErrori}
+
+${COMMON_DIR}/CheckPrereq_Mig_script ${LogFileErrori} ${CCM45_DBlog} ${CCM45_DBlog2} ${TempFileParametri} $8
+set ESITO = ${status}
+
+if (${ESITO} == 0) then
+  if (`cat ${TempFileParametri}|wc -l` != 0 ) then
+    set NumPrereq = `cat ${TempFileParametri}|wc -l`
+    set i = 0
+    while ($i < ${NumPrereq} )
+      @ i++
+      set PrereqName = `head -n $i ${TempFileParametri}|tail -n 1`
+      echo "MSG:Registrato Prerequisito: ${PrereqName}"
+    end
+  endif
+else
+  if (${ESITO} == 2) then
+    set prereq_error = `cat ${LogFileErrori}`
+    echo "MSG:Errore Prerequisito. ${prereq_error} Non Migrato"
+  else
+    echo "MSG:Anomalia nella lista prerequisiti"
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${LogFileErrori} ${TempFileParametri}
+  goto bad_task
+endif
+
+rm -f ${LogFileErrori} ${TempFileParametri}
+
+#***********************************************************************
+# Verifico la correttezza dei corequisiti; i codici di ritorno sono:
+# - 0 se e' tutto ok (in ${TempFileParametri} trovo la lista dei corequisiti
+#     che sono stati inseriti, se ce ne sono)
+# - 1 se la lista non e' formalmente corretta
+# - 2 se uno dei prerequisiti non ha la consegna migranda come
+#     corequisito.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+set LogFileErrori = "${CCM45_DBlog}/LogFileErrori"
+cat /dev/null > ${TempFileParametri}
+cat /dev/null > ${LogFileErrori}
+
+${COMMON_DIR}/CheckCoreq_Mig_script ${LogFileErrori} ${PROGETTO} ${COMITVER} ${CCM45_DBlog} ${CCM45_DBlog2} ${TempFileParametri} $9
+set ESITO = ${status}
+
+if (${ESITO} == 0) then
+  if (`cat ${TempFileParametri}|wc -l` != 0) then
+    set NumCoreq = `cat ${TempFileParametri}|wc -l`
+    set i = 0
+    while ($i < ${NumCoreq})
+      @ i++
+      set CoReqName = `head -n $i ${TempFileParametri}|tail -n 1`
+      echo "MSG:Registrato Corequisito: ${CoReqName}"
+    end
+  endif
+else
+  if (${ESITO} == 2) then
+    set coreq_error = `cat ${LogFileErrori}`
+    echo "MSG:Errore Corequisito: $coreq_error"
+    echo "MSG:$coreq_error non ha ${PROGETTO}${COMITVER} come COREQUISITO"
+  else
+    echo "MSG:Anomalia  nella lista dei Corequisiti"
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${TempFileParametri} ${LogFileErrori}
+  goto bad_task
+endif
+
+rm -f ${TempFileParametri} ${LogFileErrori}
+
+#***********************************************************************
+# Verifico la correttezza della lista dei bnd. I codici di ritorno sono:
+# - 0 se e' tutto ok
+# - 1 se non esiste la lista dei bnd
+# - 2 se esiste la directory "bnd" ma non "bnd/server/d/instdb/bind"
+# - 3 se esiste nella consegna un bnd ch non e' nella lista; in questo
+#     caso in TempFileParametri ritorno il nome del bnd mancante.
+#***********************************************************************
+set TempFileParametri = "${CCM45_DBlog}/TempFileParametri"
+cat /dev/null > ${TempFileParametri}
+
+${COMMON_DIR}/CheckBND ${MIG_LOCAL_ROOT} ${TempFileParametri} ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if (${ESITO} != 0) then
+  if (${ESITO} == 3 ) then
+    set BND_NAME = `cat ${TempFileParametri}`
+    echo "MSG:La lista ${PROGETTO}${COMITVER}.LST non contiene il file"
+    echo "MSG:${BND_NAME} presente invece nella consegna."
+  else
+    echo "MSG:ERRORE. Esiste la directory ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/bnd,"
+    if (${ESITO} == 2) then
+      echo "MSG:ma non esiste ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/bnd/server/d/instdb/bind"
+    else
+      echo "MSG:ma non esiste il file ${PROGETTO}${COMITVER}.LST oppure non si chiama come la consegna."
+    endif
+  endif
+  echo "MSG:  "
+  echo "MSG:Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  rm -f ${TempFileParametri}
+goto bad_task
+endif
+
+rm -f ${TempFileParametri}
+
+
+
+#***********************************************************************
+# Inserisco il file consegna.txt creando eventualmente la directory txt.
+#***********************************************************************
+remsh linux_cm -l root -n "find ${REMOTE_MIG_ROOT}/${PROGETTO}${COMITVER} -type f" |awk -F"${REMOTE_MIG_ROOT}/" '{ print $2 }'|xargs ${COMMON_DIR}/genera_txt_script ${MIG_LOCAL_ROOT} ${REMOTE_MIG_ROOT} ${PROGETTO} ${COMITVER}
+
+if (${status}) then
+  echo "MSG:Problemi nella costruzione del file consegna.txt."
+  echo "MSG:Verificare permessi e mount di file_system."
+  echo "MSG: "
+  echo "MSG:Operazione Annullata. Il Task${Ntask} sara' Eliminato. Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+#***********************************************************************
+# Controllo correttezza formale della lista per WSOD (nel caso sia presente)
+# Non e' consentito avere asterischi per referenziare file privati.
+# I percorsi indicati, non devono contenere il disco come indicazione.
+#***********************************************************************************
+if ( -f ${ListaDeltaWSOD} ) then
+  if (`cat ${ListaDeltaWSOD} |grep -v "ghost"|grep -v "GHOST"|grep "\*" |wc -l` != 0) then
+    echo "MSG:La Consegna ${PROGETTO}${COMITVER} non e' corretta."
+    echo "Il file ${progetto}${COMITVER}.wsd referenzia file privati con l'ausilio di asterischi"
+    echo "MSG: "
+    echo "MSG:Operazione Annullata.Il Task${Ntask} sara' Eliminato.Premere 'Close'"
+    echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+    goto bad_task
+  endif
+endif
+
+if ( -f ${ListaDeltaWSOD} ) then
+  if ((`cat ${ListaDeltaWSOD} |grep "C\:" |wc -l` != 0)||(`cat ${ListaDeltaWSOD} |grep "c\:" |wc -l` != 0)) then
+    echo "MSG:La Consegna ${PROGETTO}${COMITVER} non e' corretta."
+    echo "Il file ${progetto}${COMITVER}.wsd referenzia file con il path a partire dal disco C:"
+    echo "MSG: "
+    echo "MSG:Operazione Annullata.Il Task${Ntask} sara' Eliminato.Premere 'Close'"
+    echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+    goto bad_task
+  endif
+endif
+
+
+
+#***********************************************************************************
+# Inizio parte di gestione per wsod per i controlli prima dell'ok
+# In $ListaAmbiente la sintassi delle righe e' la seguente:
+# $oggetto(minuscolo con Path) :$Progetto(Maiuscolo, tre lettere): $Attributo(maiuscolo)
+#***********************************************************************************
+if ( -f ${ListaDeltaTemp} ) then
+  rm ${ListaDeltaTemp}
+endif
+if ( -f ${ListaWarning} ) then
+  rm ${ListaWarning}
+endif
+
+cp ${ListaAmbiente} ${ListaAmbiente}.old
+
+if ( -f ${ListaDeltaWSOD} ) then
+  cat ${ListaDeltaWSOD} |grep -v "ghost" |grep -v "GHOST" |grep -v "#" > ${ListaDeltaTemp}
+  set numero_linee = `cat ${ListaDeltaTemp} |wc -l`
+  set j = 0
+  while ($j < ${numero_linee})
+    @ j++
+    set linea = `head -n $j ${ListaDeltaTemp}|awk '{ print toupper($0)}'` 
+    if (`echo ${linea} |grep -E "PRI|PUB"|wc -l` != 0 ) then
+      set oggetto = `head -n $j ${ListaDeltaTemp}| tail -n 1 |awk '{ gsub("\\\\","\/"); print tolower($1) }'`
+      set Attributo = `head -n $j ${ListaDeltaTemp}| tail -n 1 |awk '{ print toupper($2) }'`
+      set LunghezzaAttributo = `echo ${Attributo} |awk '{ print  length($0) }'`
+      if (${LunghezzaAttributo} != 3 ) then
+        set Attributo = `echo ${Attributo} |awk '{ print substr($1,1,length($1)-1) }'`
+      endif
+      if (`cat ${ListaAmbiente} |grep -v ":${PROGETTO}:"|grep "${oggetto} " |wc -l` != 0) then
+        set AltroProgetto = `grep "${oggetto} " ${ListaAmbiente} |grep -v ":${PROGETTO}:" |awk -F: '{ print $2 }'`
+        if (${AltroProgetto} != XXX) then
+          echo "MSG:La Consegna ${PROGETTO}${COMITVER} non è corretta."
+          echo "MSG:L'oggetto ${oggetto} e' stato gia' dichiarato per WSOD"
+          echo "MSG:nel progetto ${AltroProgetto}. "
+          echo "MSG: "
+          echo "MSG:Operazione Annullata.Il Task${Ntask} sara' Eliminato.Premere 'Close'"
+          echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+          mv ${ListaAmbiente}.old ${ListaAmbiente}
+          goto bad_task
+        else
+          set OldAttr = `cat ${ListaAmbiente} |grep -v ":${PROGETTO}:"|grep "${oggetto} " |awk '{ print $3 }'`
+          if (${OldAttr} != ${Attributo} ) then
+            echo "${oggetto} ${OldAttr} ${Attributo}" >> ${ListaWarning}
+          endif
+          cat ${ListaAmbiente} |grep -v "${oggetto} " > ${ListaAmbiente}.temp
+          if (${Attributo} != PUB) then
+            echo "${oggetto} :${PROGETTO}: ${Attributo}" >> ${ListaAmbiente}.temp
+          endif
+          mv ${ListaAmbiente}.temp ${ListaAmbiente}
+        endif
+      else
+        if (`cat ${ListaAmbiente} |grep ":${PROGETTO}:"|grep "${oggetto} " |wc -l` != 0) then
+          set OldAttr = `cat ${ListaAmbiente} |grep ":${PROGETTO}:"|grep "${oggetto} " |awk '{ print $3 }'`
+          if ( ${OldAttr} != ${Attributo} ) then
+            echo "${oggetto} ${OldAttr} ${Attributo}" >> ${ListaWarning}
+            cat ${ListaAmbiente} |grep -v "${oggetto} " > ${ListaAmbiente}.temp
+            if (${Attributo} != PUB) then
+              echo "${oggetto} :${PROGETTO}: ${Attributo}" >> ${ListaAmbiente}.temp
+            endif
+            mv ${ListaAmbiente}.temp ${ListaAmbiente}
+          endif
+        else
+          if (${Attributo} != PUB) then
+            echo "${oggetto} :${PROGETTO}: ${Attributo}" >> ${ListaAmbiente}
+          endif
+        endif
+      endif
+    endif
+  end
+  if (-f ${ListaWarning} ) then
+    echo "MSG:La Consegna ${PROGETTO}${COMITVER} ha modificato i seguenti attributi"
+    set Numero_Warning = `cat ${ListaWarning}|wc -l`
+    set i = 0
+    while ($i < ${Numero_Warning})
+      set OGGETTO = `head -n $j ${ListaWarning}| tail -n 1|awk '{ print $1 }'`
+      set OLDATT = `head -n $j ${ListaWarning}| tail -n 1|awk '{ print $2 }'`
+      set NEWATT = `head -n $j ${ListaWarning}| tail -n 1|awk '{ print $3 }'`
+      echo "MSG: ${OGGETTO} da ${OLDATT} a ${NEWATT}"
+    end
+    echo "MSG:La Migrazione verra' comunque effettuata. Premere Close"
+  endif
+endif
+
+#***********************************************************************
+# Creo la directory fit se il progetto e' presente nella lista sotto CNF_DIR
+# - 0 se e' tutto ok
+# - 1 se la creazione della directory con il file non riesce.
+#***********************************************************************
+${COMMON_DIR}/CreaFitDir ${MIG_LOCAL_ROOT} ${CNF_DIR} ${PROGETTO} ${COMITVER}
+set ESITO = ${status}
+
+if (${ESITO} != 0) then
+  if (${ESITO} == 1 ) then
+    echo "MSG:Fallita creazione directory fit in ${MIG_LOCAL_ROOT}/${progetto}${COMITVER}"
+  else
+    echo "MSG:Fallita creazione file fit.txt in ${MIG_LOCAL_ROOT}/${progetto}${COMITVER}/fit"
+  endif
+  echo "MSG:nel progetto ${AltroProgetto}. "
+  echo "MSG: "
+  echo "MSG:Operazione Annullata.Il Task${Ntask} sara' Eliminato.Premere 'Close'"
+  echo "ERROR_MSG:Migrazione respinta. Task${Ntask} Deleted" >>&/$CCM45_DBlog/ErrMsg
+  goto bad_task
+endif
+
+
+
+#***********************************************************************
+goto good_tsk
+#***********************************************************************
+
+#***********************************************************************
+# Check is failed. Remove current task (CCM45 Session must be external)
+#***********************************************************************
+bad_task:
+
+cat > ${CCM45_DBlog}/tsk${Ntask} <<!
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+ccm del task${Ntask}~1:task:probtrac
+ccm stop
+rm ${CCM45_DBlog}/tsk${Ntask} &
+if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}) then
+  rm -rf ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}
+endif
+!
+source ${CCM45_DBlog}/tsk${Ntask} &
+exit 0
+
+#***********************************************************************
+# Checking seems OK .... Now verify if migration is busy
+#***********************************************************************
+good_tsk:
+
+echo "LOCK Migrazione ${PROGETTO}${COMITVER}" > ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+echo "MSG:Migrazione Consegna ${PROGETTO}${COMITVER} in CONTINUUS in corso ..."
+echo "MSG:   "
+
+#***********************************************************************
+# Check is OK. (CCM45 Session must be external)
+#***********************************************************************
+
+cat > ${CCM45_DBlog}/DoMig.${PROGETTO} <<EndOfInput1
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+
+#***********************************************************************
+# Now the Task is ghost for each user .... 
+#***********************************************************************
+ccm query -t task -name task${Ntask}
+ccm attr -m resolver -v " " @1
+
+ccm work_area -wa -setpath ${WA_ROOT} ${PROGETTO}~MIG
+
+ccm query "is_member_of('${PROGETTO}~MIG:project:1')" -u -f "ccm relate -n associated_cv -from task${Ntask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.${PROGETTO}
+ccm migrate -d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} -p ${PROGETTO}~MIG -s integrate >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+sync 
+ccm query "is_member_of('${PROGETTO}~MIG:project:1')" -u -f "ccm relate -n associated_cv -from task${Ntask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.${PROGETTO}
+
+diff -b -e ${CCM45_DBlog}/BfrMig.${PROGETTO} ${CCM45_DBlog}/AftMig.${PROGETTO}  | awk '/ {1,}/' > ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+ccm attr -c release -t string -v ${VER}  \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | awk -F" -to " '{print (\$2)}'\`
+if (\${status})  then
+  ccm attr -m release -v ${VER}  \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | awk -F" -to " '{print (\$2)}'\`
+endif
+
+ccm attr -c platform -t string -v "AIX-DB_FIL" \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | awk -F" -to " '{print (\$2)}'\`
+if (\${status})  then
+  ccm attr -m platform -v "AIX-DB_FIL" \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | awk -F" -to " '{print (\$2)}'\`
+endif
+
+source ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+echo "Delta.${PROGETTO}${COMITVER} Created" >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+rm ${CCM45_DBlog}/AftMig.${PROGETTO}
+rm ${CCM45_DBlog}/BfrMig.${PROGETTO} 
+
+#***********************************************************************
+# Bind list check 
+#***********************************************************************
+
+set flist = \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | grep -i ".BND~" | awk '{print (\$8)}'\`
+set flst  = \`cat ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER} | grep -i "${PROGETTO}${COMITVER}.LST" | awk '{print (\$8)}'\`
+
+foreach kind (\${flist})
+  set fnameup = \`echo \${kind} | awk -F. '{print toupper(\$1)}'\`
+  set fnamelo = \`echo \${kind} | awk -F. '{print tolower(\$1)}'\`
+  set dbname = \`ccm cat \${flst[1]} | grep -i " \${fnameup} "| awk -F"\${fnameup} | \${fnamelo}" '{print (\$1)}'\`
+  set dbparm = \`ccm cat \${flst[1]} | grep -i " \${fnameup} "| awk -F"\${fnameup} | \${fnamelo}" '{print (\$2)}'\`
+  if ( \$#dbname || \$#dbparm )  then
+    ccm attr -c comment -t text -v "[DbName] \$dbname  [DbParm] \$dbparm" \${kind} 
+    if (\${status})  then
+      ccm attr -m comment -v "[DbName] \$dbname  [DbParm] \$dbparm" \${kind} 
+    endif
+  else 
+    ccm attr -c comment -t text -v "[DbName]          [DbParm]" \${kind}
+    if (\${status})  then
+      ccm attr -m comment -v "[DbName]          [DbParm]" \${kind}
+    endif
+  endif
+end
+
+#***********************************************************************
+# Append corequisits and prerequisits to delta
+#***********************************************************************
+
+echo PREREQUISIT:$8 | awk '{gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+echo COREQUISIT:$9 | awk '{gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+
+#***********************************************************************
+# Set release table
+#***********************************************************************
+
+#***********************************************************************
+# Salvo il valore del text_editor
+#***********************************************************************
+ccm set text_editor_orig "\`ccm set text_editor\`"
+
+#***********************************************************************
+# Estraggo il contenuto dell'attributo release table 
+#***********************************************************************
+ccm set text_editor "cat %filename > ${CCM45_DBlog}/${PROGETTO}.tmp"
+ccm query -t admin -n base
+ccm attr -m releases @1
+set jj = \`grep ${VER} ${CCM45_DBlog}/${PROGETTO}.tmp | awk '{print substr(\$1,1,5)}'\`
+
+if ( ${VER} != \$jj )  then
+  echo ${VER}:  ${VER} > ${CCM45_DBlog}/${PROGETTO}.tmp
+  ccm set text_editor "cat ${CCM45_DBlog}/${PROGETTO}.tmp >> %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+endif
+
+
+#***********************************************************************
+# Sorto il contenuto della release table
+#***********************************************************************
+ccm set text_editor "cat %filename > ${CCM45_DBlog}/${PROGETTO}.tmp;sort ${CCM45_DBlog}/${PROGETTO}.tmp > ${CCM45_DBlog}/${PROGETTO}.tmp1;mv ${CCM45_DBlog}/${PROGETTO}.tmp1 ${CCM45_DBlog}/${PROGETTO}.tmp;cat ${CCM45_DBlog}/${PROGETTO}.tmp > %filename"
+ccm query -t admin -n base
+ccm attr -m releases @1
+
+ccm set text_editor "\`ccm set text_editor_orig\`"
+ccm unset text_editor_orig
+
+rm ${CCM45_DBlog}/${PROGETTO}.tmp
+
+#***********************************************************************
+# Set associated release to the task
+#***********************************************************************
+
+ccm query -t task -name task${Ntask}
+ccm attr -m release -v ${VER} @1
+
+#***********************************************************************
+# Write release into Synopsis
+#***********************************************************************
+
+set synps = \`ccm query -t task -n task${Ntask} -u -f "%task_synopsis"\`
+set synps = \`printf "%s  %s " "${PROGETTO}${COMITVER}~MIG Migrazione" \${synps}\`
+
+ccm attr -m task_synopsis -v "\${synps}" @1 
+ccm attr -m resolver -v chk_sa @1
+ccm attr -c task_description -t string -v "${PROGETTO}${COMITVER}~MIG" @1
+if (\${status}) then
+  ccm attr -m task_description -v "${PROGETTO}${COMITVER}~MIG" @1
+endif
+
+
+echo "Release ${VER} associated to task${Ntask}" >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+#***********************************************************************
+# Check KEY-NAME in order to create the task and set KEY.
+# Check DB2 to create a task.
+#***********************************************************************
+
+grep Archiving ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK |awk '{print (\$2)}' | cut -f "1" -d "~" > ${CCM45_DBlog}/lstmig.${PROGETTO}
+
+find ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} -name "DB2" -o -name "db2" -type d > ${CCM45_DBlog}/lstdir.${PROGETTO} 
+
+if ( \`cat ${CCM45_DBlog}/lstdir.${PROGETTO} | grep -c -E "db2|DB2"\` ) then
+  set N = \`ccm create_task -s "Attività DBA. Verifica formale degli oggetti DB2 di ${PROGETTO}${COMITVER}~MIG" -r dba_sa -platform AIX-DB_FIL -release ${VER} -subsystem ${PROGETTO} | awk '{print (\$2)}'\`
+  ccm query -t task -name task\$N
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  if (\${status}) then
+    ccm attr -m comitver -v ${COMITVER} @1
+  endif
+  ccm attr -c task_description -t string -v "Task di riferimento: task${Ntask}" @1
+  echo DB2_FLAG >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+endif
+
+#*******************************************************************************
+# Nel caso siano variati dei parametri oppure siano presenti dei GHOST accendo
+# un task a prc_sesi per la modifica del fitfile
+#*******************************************************************************
+if (-f ${ListaDeltaWSOD}) then
+  set nfit = \`ccm create_task -s "Attivita' di controllo per WSOD per ${PROGETTO}${COMITVER}" -r prc_sesi -platform AIX-DB_FIL -release ${VER} -subsystem ${PROGETTO} | awk '{print (\$2)}'\`
+  ccm query -t task -name task\${nfit}
+  ccm attr -c comitver -t string -v ${COMITVER} @1
+  if (\${status}) then
+    ccm attr -m comitver -v ${COMITVER} @1
+  endif
+  ccm attr -c task_description -t string -v "Task di riferimento: task${Ntask}" @1
+#***********************************************************************
+# Avviso con una mail prc_sesi del task per WSOD
+#***********************************************************************
+  setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+  /usr/CONT_SRV/rebol/script/mailer.r emailADV WSOD prc_sesi \${nfit} ${PROGETTO}${COMITVER} >> /usr/CONT_SRV/rebol/log/mail_log
+endif
+
+#***********************************************************************
+# Check CMD to create the task.
+#***********************************************************************
+
+find ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER} -name "CMD" -o -name "cmd" -type d > ${CCM45_DBlog}/lstdir.${PROGETTO} 
+
+if ( \`cat ${CCM45_DBlog}/lstdir.${PROGETTO} | grep -c -E "cmd|CMD"\` ) then
+  echo CMD_FLAG >> ${CCM45_DBlog}/Delta.${PROGETTO}${COMITVER}
+endif
+
+echo "Checked KEY-NAME (CMD or DB2)" >> ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+rm ${CCM45_DBlog}/lstdir.${PROGETTO}
+rm ${CCM45_DBlog}/lstmig.${PROGETTO}
+
+ccm set role build_mgr
+
+ccm query "cvtype='folder' and folder_subsys='${PROGETTO}~MIG'"
+ccm folder -modify -add_task ${Ntask} @1 >> ${CCM45_DBlog}/ErrMsg
+
+
+ccm stop
+rm -rf ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}
+
+rm ${CCM45_DBlog}/Mig.${PROGETTO}.LOCK
+
+#***********************************************************************
+# End to build the Script.
+#***********************************************************************
+
+EndOfInput1
+
+echo "MSG:UnixLogfile:${CCM45_DBlog}/Mig.${PROGETTO}.LOCK"
+echo "MSG:   "
+
+#***********************************************************************
+# Run the Script.
+#***********************************************************************
+
+source ${CCM45_DBlog}/DoMig.${PROGETTO} &
+

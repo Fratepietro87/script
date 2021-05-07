@@ -1,0 +1,66 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    cpPatch_script 
+#*
+#* Goal: copiare dalla WorkArea su fs i file delle consegne estratte;
+#*       per ogni file contenuto nella consegna, prima della copia si
+#*       verifica se tale file sia effettivamente in uso in Continuus
+#*       per evitare regressioni di software; la script e' chiamata
+#*       dalla funzione xargs
+#*
+#* Parameters: $1 SWD_ROOT (path di destinazione)
+#*             $2 SOURCE_DIR (path del montaggio del software su gpm2)
+#*             $3... Elenco file
+#*
+#* Author: Luca Brizzolara 1999
+#*
+#***********************************************************************
+
+# **********************************************************************
+# Setto variabili di ambiente
+# **********************************************************************
+
+set SWD_ROOT = $1
+set SOURCE_DIR = $2
+
+# **********************************************************************
+# Copio i file da gpm1 a gpm2 utilizzando il mount
+# **********************************************************************
+
+shift
+shift
+
+while ($#argv != 0)
+  echo $1
+  set DirBase = `echo $1 |awk -F/ '{ print toupper($1) }'`
+  if (${DirBase} == "SISO" ) then
+    set DirBase = "SIS"
+  endif
+  set file_con_path = "${DirBase}/u/dsim/$1"
+  echo $file_con_path
+  echo ${SOURCE_DIR}/${file_con_path}
+
+  sleep 5
+  if (-f ${SOURCE_DIR}/${file_con_path}) then
+    set sep = `echo ${file_con_path} | awk '{print gsub("/","",$1)}'`
+    set rootsep = `echo ${SWD_ROOT} | awk '{print gsub("/","",$1)}'`
+
+    set i = ${rootsep}
+    while ($i <= (${rootsep} + ${sep}))
+      @ i++
+      set cur_dir = `echo ${SWD_ROOT}/${file_con_path} | cut -d/ -f1-$i`
+      if !(-d ${cur_dir}) then
+        echo "mkdir ${cur_dir}"
+        mkdir ${cur_dir}
+        chmod a+w ${cur_dir}
+      endif
+    end
+    if (-f ${SOURCE_DIR}/${file_con_path} ) then
+      echo copio da \[ ${SOURCE_DIR}/${file_con_path} \] a \[ ${SWD_ROOT}/${file_con_path} \]
+      cp -f  ${SOURCE_DIR}/${file_con_path} ${SWD_ROOT}/${file_con_path}
+      chmod a+w ${SWD_ROOT}/${file_con_path}
+    endif
+  endif
+  shift
+end

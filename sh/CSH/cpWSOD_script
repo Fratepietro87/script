@@ -1,0 +1,162 @@
+#!/bin/csh
+#***********************************************************************       
+#*                                                                             
+#*                 cpWSOD_script                                               
+#*                                                                             
+#* Lo scopo di questa script e' quello di copiare in alberatura per            
+#* WSOD i files estratti da promotare singolarmente in chiaro.                 
+#* Nel periodo di convivenza tra le due architetture avviene la copia          
+#* tra la directory di estrazione e una directory a parte (sempre              
+#* sotto la directory generale di estrazione per ambiente, ad es.              
+#* /usr/CONT_SRV/SWD_FIL/CSU) per i files WSOD , chiamata ad es. CSU_WSOD.     
+#* Quando avremo solo Lan WSOD, anziche' fare "cp" (copia) si fara'            
+#* "mv" (move).                                                                
+#* - commento di Romanini -                                                    
+#***********************************************************************       
+                                                                                                 
+
+# **********************************************************************                         
+# Parametri passati da UpFldSWD_script:                                                          
+#
+# $1 = SWD_ROOT ,cioe' /usr/CONT_SRV/SWD_FIL                                                     
+# $2 = ambiente , CSU, SQA, PRD                                                                  
+# $3 = Listambiente, cioe' la lista contenente tutti gli oggetti WSOD, presenti                  
+#      in Continuus, per ogni ambiente; questa lista, ad es. per il CSU e':                      
+#      /usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log/WSOD.CSU                                        
+#                                                                                                
+# Il chiamante (UpFldSWD_script) passa al presente script, tramite xargs,                        
+# il risultato di una "find": tale find cerca tutti i files sotto la                             
+# directory di estrazione,che e', ad esempio, /usr/CONT_SRV/SWD_FIL/CSU                          
+# e da a xargs una lista dei files estratti, con il loro path, che sta                           
+# al di sotto della directory base (sempre nell'esempio /usr/CONT_SRV/SWD_FIL/CSU).              
+# La lista (ad es. da /usr/CONT_SRV/SWD_FIL/CSU) e' del tipo:                                    
+# mdn21022.srv                                                                                   
+# DIA21024.txt                                                                                   
+# fid/c/fidi28/scar.bat                                                                          
+# fid/c/fidi28/fidi.bat                                                                          
+# FID28512.txt                                                                                   
+# pct/c/pactum/xdocf.exe                                                                         
+# pct/c/pactum/xformf.exe                                                                        
+# pct/c/pactum/pactos2.exe                                                                       
+# pct/c/pactum/acc2srv.exe                                                                       
+# pct/c/os2/dll/acc2pecx.dll                                                                     
+# PCT30005.txt                                                                                   
+# CSU_BND.LST                                                                                    
+# response.txt                                                                                   
+# DELTA_CSU_BND.LST                                                                              
+#                                                                                                
+# Gli oggetti passati sono in numero variabile.                                                  
+#                                                                                                
+# - commento di Romanini -                                                                       
+# **********************************************************************                         
+
+
+set DB_LOG = "/usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log"
+set SWD_ROOT = $1
+set ambiente = $2
+set ListaAmbiente = $3
+set WSOD_DIR = "${ambiente}_WSOD"
+
+
+shift
+shift
+shift
+
+
+# **********************************************************************     
+# Fatte le tre "shift" iniziali, $1 contiene il primo argomento passato      
+# alla presente script, cioe' il primo nome di file.                         
+# Qui sotto c'e' il ciclo su ogni nome di file: $1 contiene,                 
+# di volta in volta, i vari nomi di file passati,                            
+# grazie alla "shift" in ciclo.                                              
+# - commento di Romanini -                                                   
+# **********************************************************************     
+
+
+while ($#argv != 0)
+  echo $1
+
+
+# *******************************************************************************   
+# L'istruzione sotto imposta il nome del file:                                      
+# l'"awk" specificata , partendo da una stringa , ad es. "fid/c/fidi28/scar.bat",   
+# fornisce come risultato "scar.bat".                                               
+# - commento di Romanini -                                                          
+# *******************************************************************************   
+
+
+  set nome_file = `echo $1|awk -F/ '{ n=split($0,A);print A[n] }'`
+
+
+# ***********************************************************************************             
+# Se il file e' nella Lista d'ambiente per WSOD, allora ,                            
+# se lo stesso file c'e' due volte , viene scritto un file sotto                     
+# /usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log che si chiama Doppio_file.               
+# In questo caso c'e' un ciclo su Doppio_file, in cui si isola,                      
+# nella prima riga che contiene il nome del file considerato, il suo path.           
+# Quindi si costruisce la directory di estrazione per wsod, ad esempio               
+# /usr/CONT_SRV/SWD_FIL/CSU_WSOD .                                                   
+# Con un ciclo interno si costruisce sotto questa, la directory trovata (la prima),  
+# nella lista d'ambiente pre WSOD , del file in esame.                               
+# Infine il file viene copiato dalla work-area alla directory di estrazione per WSOD 
+# cosi' costruita (es. /usr/CONT_SRV/SWD_FIL/CSU_WSOD/fid/c/fidi28/scar.bat).        
+#                                                                                    
+# - commento di Romanini -                                                           
+# ************************************************************************************             
+
+  if (`grep ${nome_file} ${ListaAmbiente}|wc -l` != 0 ) then
+    if (`grep ${nome_file} ${ListaAmbiente}|wc -l` != 1 ) then
+      grep ${nome_file} ${ListaAmbiente} > ${DB_LOG}/Doppio_file
+      set Numero_linee = `cat ${DB_LOG}/Doppio_file|wc -l`
+      set i = 0
+      while ($i < ${Numero_linee})
+        @ i++
+        set ObjectPath = `head -n $i ${DB_LOG}/Doppio_file|tail -n 1|awk '{ print $1 }'`
+        if(`echo $1|grep ${ObjectPath}|wc -l` != 0 ) then
+          set i = ${Numero_linee}
+          if !(-d ${SWD_ROOT}/${WSOD_DIR} ) then
+            mkdir ${SWD_ROOT}/${WSOD_DIR}
+          endif
+          set root_dest = "${SWD_ROOT}/${WSOD_DIR}"
+          set sep = `echo $1 | awk '{print gsub("/","",$1)}'`
+          set rootsep = `echo ${root_dest} | awk '{print gsub("/","",$1)}'`
+          set i = ${rootsep} 
+          while ($i <= (${rootsep} + ${sep}))
+            @ i++
+            set cur_dir = `echo ${root_dest}/$1 | cut -d/ -f1-$i`
+            if !(-d ${cur_dir}) then
+              echo mkdir ${cur_dir} 
+              mkdir ${cur_dir} 
+              chmod a+w ${cur_dir} 
+            endif
+          end
+	  echo "copio da \[ ${SWD_ROOT}/${ambiente}/$1 \] a \[ ${SWD_ROOT}/${WSOD_DIR}/$1 \]"
+          cp ${SWD_ROOT}/${ambiente}/$1 ${SWD_ROOT}/${WSOD_DIR}/$1
+        endif
+      end
+    else
+      set ObjectPath = `grep ${nome_file} ${ListaAmbiente}| awk '{ print $1 }'`
+      if(`echo $1|grep ${ObjectPath}|wc -l` != 0 ) then
+        if !(-d ${SWD_ROOT}/${WSOD_DIR} ) then
+          mkdir ${SWD_ROOT}/${WSOD_DIR}
+        endif
+        set root_dest = "${SWD_ROOT}/${WSOD_DIR}"
+        set sep = `echo $1 | awk '{print gsub("/","",$1)}'`
+        set rootsep = `echo ${root_dest} | awk '{print gsub("/","",$1)}'`
+        set i = ${rootsep} 
+        while ($i <= (${rootsep} + ${sep}))
+          @ i++
+          set cur_dir = `echo ${root_dest}/$1 | cut -d/ -f1-$i`
+          if !(-d ${cur_dir}) then
+            echo mkdir ${cur_dir} 
+            mkdir ${cur_dir} 
+            chmod a+w ${cur_dir} 
+          endif
+        end
+	echo "copio da \[ ${SWD_ROOT}/${ambiente}/$1 \] a \[ ${SWD_ROOT}/${WSOD_DIR}/$1 \]"
+        cp ${SWD_ROOT}/${ambiente}/$1 ${SWD_ROOT}/${WSOD_DIR}/$1
+      endif
+    endif
+  endif
+  shift
+end

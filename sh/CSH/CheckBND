@@ -1,0 +1,52 @@
+#!/bin/csh
+#***********************************************************************
+#*                       CheckBND
+#* 
+#* Goal: Controllare la correttezza della lista dei bnd. I codici di
+#*       ritorno sono:
+#*       0 - se tutto ok
+#*       1 - se esiste la directory bnd ma non la lista
+#*       2 - se esiste la directory bnd ma non la lista bnd/server/d/instdb/bind
+#*       3 - se nella consegna esiste un bnd non contenuto nella lista; in tal
+#*           caso in LOG_FILE restituisco il nome di tale bnd.
+#*
+#* Parametri passati:$1 MIG_LOCAL_ROOT (Directory dove si trovano le consegne)
+#*                   $2 LOG_FILE (dove mettere il nome del bnd mancante nella lista)
+#*                   $3 Nome del progetto
+#*                   $4 Numero della consegna
+#* 
+#* Autore: Luca Brizzolara - Apr 2000
+#* 
+#***********************************************************************
+
+set MIG_LOCAL_ROOT = $1
+set LOG_FILE = $2
+set PROGETTO = $3
+set COMITVER = $4
+set progetto = `echo ${PROGETTO} |awk '{ print tolower($1) }'`
+
+
+if (-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/bnd) then
+  if !(-f ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${progetto}${COMITVER}.lst) then
+    exit 1
+  else
+    if !(-d ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/bnd/server/d/instdb/bind) then
+      exit 2
+    else
+      ls -l ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/bnd/server/d/instdb/bind/*.bnd | awk '{print $9}' | awk -F"instdb/bind/" '{print $2}'| awk -F. '{print toupper($1)}' > ${LOG_FILE}
+      set fnd = `cat ${LOG_FILE}`
+      set fndnum = `echo $#fnd`
+      set i = 0
+      while ($i < ${fndnum})
+        @ i++
+        if !(`echo " ${fnd[$i]} " | xargs -i grep -c {} ${MIG_LOCAL_ROOT}/${PROGETTO}${COMITVER}/${progetto}${COMITVER}.lst`) then
+	  echo ${fnd[$i]} > ${LOG_FILE}
+	  exit 3
+        endif
+      end
+    endif
+  endif
+endif
+
+
+exit 0

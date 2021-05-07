@@ -1,0 +1,337 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    CloseExtSWD_script 
+#*
+#* Author: Cavana Carlo 1998
+#*
+#* Questa script e' richiamata sia per completare il task di estrazione
+#* sia per completare il task di swd_sesi. 
+#* Il completamento del task di swd_sesi (task di distribuzione)
+#* avviene alla label "CheckSWD".
+#* 
+#* Parametri passati da Trig_eng.def:
+#* 1) cod_opzione (Estraz.Delta, Distrib.SoftWare)
+#* 2) creator (ccm_root, ccm_root)
+#* 3) resolver (csu_sesi, swd_sesi)
+#* 4) task_number (4597, 4601)
+#* 5) jolly :
+#*     task di estrazione:
+#*       jolly = task4601 (il task 4601 e' il task di distribuzione) 
+#*
+#*     task di distribuzione:
+#*       jolly = /usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/log/UpFldSWD.task4601.CSU
+#*               e' il file di log dove sono elencati i task ghost) 
+#*
+#* 6) comitver (task di estrazione: es. CSU, PRD ecc.
+#*              task di distribuzione: idem)
+#* 
+# - commento di Romanini -
+#***********************************************************************
+
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_FIL"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set EDM_DIR = "/usr/CONT_SRV/SWD_FIL/DBFIL"
+set DIR_DEL = "MIG_FIL"
+set LOCAL_DIR = "/usr/CONT_SRV/LOCAL_FIL"
+
+# **********************************************************************
+# Actions check
+# **********************************************************************
+
+
+if (($1 != "Estraz.Delta" && $1 != "Estraz.Master") || ($3 != csu_sesi && $3 != sqa_sesi && $3 != prd_sesi ) || (`echo $5 | awk '{print substr($1,1,4)}'` != "task")) then
+  goto CheckSWD
+endif
+
+
+# **********************************************************************
+# Build the Script.
+# **********************************************************************
+
+# **********************************************************************
+# Nel caso in cui la presente script e' chiamata per completare 
+# il task di estrazione, esegue l'assegnazione del task di distribuzione  
+# all'utente swd_sesi.
+# - commento di Romanini -
+# **********************************************************************
+
+cat > ${CCM45_DBlog}/$4ToSWD.LOCK <<EndOfInput1
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+ccm query -t task -name $5
+ccm attr -m status -v "task_assigned" @1
+set FileConsegna = \`ccm attr -s jolly @1\`
+
+ccm query -t task -name task$4                                     
+set FLAG_WSOD = \`ccm attr -s task_description @1|grep WSOD|wc -l\`
+ccm stop
+
+set AMBIENTE = \`echo $3 |awk -F"_" '{ print toupper(\$1) }'\`
+if (\${AMBIENTE} == CSU ) then
+  set EDM_NAME = "BCICSU.log"
+  set WSD_NAME = "BCICSU.wsd"
+endif
+if (\${AMBIENTE} == SQA ) then
+  set EDM_NAME = "BCICOL.log"
+  set WSD_NAME = "BCICOL.wsd"
+endif
+if (\${AMBIENTE} == PRD ) then
+  set EDM_NAME = "BCI.log"
+  set WSD_NAME = "BCI.wsd"
+endif
+set EDM_FILE = "${EDM_DIR}/\${EDM_NAME}"
+set WSD_FILE = "${EDM_DIR}/\${WSD_NAME}"
+
+if (\${FLAG_WSOD} == 1 ) then
+  if (-f \${WSD_FILE}) then
+    cat \${WSD_FILE} >> \${EDM_FILE}
+  endif
+endif
+
+setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+if (\${AMBIENTE} != PRD ) then
+  /usr/CONT_SRV/rebol/script/mailerLuca.r EMAILEXT \${AMBIENTE} \${FileConsegna} \${EDM_FILE} >> /usr/CONT_SRV/rebol/log/mail_log &
+endif
+rm ${CCM45_DBlog}/$4ToSWD.LOCK &
+
+EndOfInput1
+
+# **********************************************************************
+# Run the Script.
+# **********************************************************************
+
+source ${CCM45_DBlog}/$4ToSWD.LOCK &
+
+echo "MSG:Distrib.SoftWare assegnata a swd_sesi"
+    
+exit 0
+
+
+CheckSWD:
+
+# **********************************************************************
+# Se , a questo punto, il task non e' di distribuzione, la script esce
+# con exit=0.
+# - commento di Romanini -
+# **********************************************************************
+
+if (($1 != "Distrib.SoftWare") || ($3 != swd_sesi)) then
+  exit 0
+else
+  set  envr = `echo $6 | awk '{print tolower($1)}'`
+endif
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}`
+
+# **********************************************************************************
+# Se c'e' ancora un task con risolutore cp_db2, in stato "task_assigned" o 
+# "registered", in PRD, allora l'utente cp_db2 deve ancora dare la propria check-in.
+# 
+# - commento di Romanini -
+# **********************************************************************************
+
+if (`ccm query "cvtype='task' and comitver='PRD' and jolly='$5' and resolver='cp_db2' and (status='task_assigned' or status='registered')" | grep -c task`) then
+  ccm stop
+  echo "MSG:   "
+  echo "MSG: Anticipi DOC NON completati da cp_db2, Check In Task $4 non eseguito."
+  echo "MSG:   "
+  exit 1
+endif
+ccm stop
+    
+set fname = `cat $5 | awk -F' ' '{ n=split($0,A); for (x in A) print A[x]}'`
+set fnum = `echo $#fname`
+set i = 0
+
+#Modifica parte per mail con Rebol
+
+setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+/usr/CONT_SRV/rebol/script/mailer.r emailSWD $6 $5 >> /usr/CONT_SRV/rebol/log/mail_log &
+
+
+#******************************************************************************
+# Di seguito, la if per dare il messaggio sul numero di consegne da distribuire
+# e quindi il ciclo per dare il messaggio di quali consegne vengono distribuite
+# 
+# - commento di Romanini -
+#******************************************************************************
+
+if (${fnum} >= 0) then
+  echo "MSG:$1 $6 Eseguita."
+  if (${fnum} > 0) then
+    echo "MSG:$fnum Nuove Consegne Distribuite: "
+  else
+    echo "MSG:Nessuna nuova Consegna Distribuita."
+    set consegna = " "
+  endif
+else
+  echo "MSG:ERRORE Operazione Annullata. Contattare CM/Administrator."
+  echo "ERROR_MSG:ERROR on SWD $6" >>&/$CCM45_DBlog/ErrMsg
+  exit 1
+endif
+
+while ($i < ${fnum})
+  @ i++
+  set consegna = `echo ${fname[$i]} | awk -F"-" '{print ($2)}'` 
+  echo "MSG: $consegna "
+end
+
+#**********************************************************************
+# Create the Script.
+#**********************************************************************
+
+#******************************************************************************
+# i Backslash (\) , consentono la non interpretazione e la non esecuzione,
+# da parte della shell, di alcuni caratteri speciali, in particolare "`"
+# (apice rovescio) e "$".
+# Come nel caso delle istruzioni che seguono, i backslash vengono utilizzati per 
+# scrivere ,in un file, una script, per poi lanciarla in background.
+# Sara' in quella sede che i caratteri "`" e "$" verranno interpretati ed
+# eseguiti dalla shell, non prima. 
+# Il file contenente la script si trova sotto la dir. di log e si chiama
+# , ad es. , 4597EndSWD.LOCK 
+# - commento di Romanini -
+#******************************************************************************
+
+cat > ${CCM45_DBlog}/$4EndSWD.LOCK <<EndOfInput2
+setenv CCM_ADDR \`ccm start -m -q -nogui -r ccm_admin  -d ${CCM45_DB}\`
+
+#******************************************************************************
+# L'istruzione successiva pone nella variabile fname , l'elenco dei task ghost ,
+# relativi alle consegne estratte, elenco presente nel file di log
+# UpFldSWD.task{Ntask}.ambiente (che e' l'attributo jolly del task di estrazione). 
+# L'elenco e' del tipo: 
+# 4674-UTC20000
+# 4673-SCF27005
+# 4672-PID20011
+# 4671-GSS25008
+# 4670-GSS24017
+# 4675-UTC20001
+#
+# - commento di Romanini -
+#******************************************************************************
+
+set fname = \`cat $5 | awk -F' ' '{ n=split(\$0,A); for (x in A) print A[x]}'\`
+
+
+#******************************************************************************
+# In fnum c'e' il numero dei task ghost
+# - commento di Romanini -
+#******************************************************************************
+
+set fnum = \`echo \$#fname\`
+
+
+#******************************************************************************        
+# Sotto c'e' il ciclo sui task ghost.                                                
+# Per ogni task ghost :
+# a) viene impostata la variabile "task" con il numero del task ghost (es. 4674)
+# b) viene impostata la var. "consegna" con il nome della consegna (es. UTC20000)  
+# c) viene impostata la var. "VER" con la release (es. UTC20)
+# d) viene impostata la var. "subsys" con l'acronimo applicazione (es. UTC)
+# e) viene impostata la var. "comitv" con la release-versione (es. 20000)
+# f) vengono creati i task di "Autorizzazione {consegna} da {ambiente} ad {ambiente}"  
+#                             (asseganato a chk_csu o chk_sqa)
+#    e , se siamo in Collaudo , di "Autorizzazione alla distribuzione in {ambiente}"
+#    (assegnato a cm_sesi).
+#    Entrambe hanno il cod_opzione = "CheckForNextEnv".
+# g) viene data la check-in al task di Distribuzione (swd_sesi).
+# h) se siamo in CSU o Collaudo, si controlla se nel file Delta.{consegna} ci 
+#    sono , valorizzati, i flag DB2_FLAG e CMD_FLAG;    
+#    se si , vengono creati rispettivamente i task:
+#    "Attività DBL. Controllo oggetti DB2 di..."
+#    "Attività PRC. Controllo oggetti CMD di ..." 
+#    In quest'ultimo caso viene mandata , con "rebol" una posta Intranet a prc_sesi
+#    per avvisare che c'e' un task a suo carico.
+# - commento di Romanini -                                                             
+#******************************************************************************        
+
+set i = 0
+
+while (\$i < ${fnum})
+  @ i++
+  set task = \`echo \${fname[\$i]} | awk -F"-" '{print (\$1)}'\` 
+  set consegna = \`echo \${fname[\$i]} | awk -F"-" '{print (\$2)}'\` 
+  set VER = \`echo \${consegna} | awk '{print substr(\$1,1,5)}'\`
+  set subsys = \`echo \${consegna} | awk '{print substr(\$1,1,3)}'\`
+  set comitv = \`echo \${consegna} | awk '{print substr(\$1,4,5)}'\`
+
+  if ($6 == CSU || $6 == SQA) then
+    if ($6 == CSU) then
+      set nextenvr = SQA
+    else
+      set nextenvr = PRD
+    endif
+    set N = \`ccm create_task -s "Autorizzazione \${consegna} $6 -> \${nextenvr}" -r "chk_${envr}" -platform AIX-DB_FIL -release \${VER} -subsystem \${subsys}  | awk '{print (\$2)}'\`
+    ccm query -t task -name task\$N
+    ccm attr -c comitver -t string -v "\$comitv" @1
+    ccm attr -c cod_opzione -t string -v "CheckForNextEnv" @1
+    if ($6 == SQA) then
+      set N = \`ccm create_task -s "Autorizzazione alla distribuzione in \${nextenvr} di \${consegna}" -r "cm_sesi" -platform AIX-DB_FIL -release \${VER} -subsystem \${subsys}  | awk '{print (\$2)}'\`
+      ccm query -t task -name task\$N
+      ccm attr -c comitver -t string -v "\${comitv}" @1
+      ccm attr -c cod_opzione -t string -v "CheckForNextEnv" @1
+    endif
+  endif
+
+  ccm query -t task -name task\${task}
+  ccm attr -c resolver -t string -v "cm_sesi" @1 
+  ccm attr -m status -v "task_assigned" @1
+  set data_check = \`date +"%a %e %m %Y"\`
+  ccm task -checkin \${task} -c "SWD Completed: \${consegna}~$6 \${data_check}"
+
+#   ********************************************************************
+#   Check DB2 in order to create a task for CSU -> SQA life-cicle.
+#   ********************************************************************
+
+  if ($6 == CSU || $6 == SQA) then
+    if ( \`cat ${CCM45_DBlog}/Delta.\${consegna} | grep -c DB2_FLAG\` ) then
+      set N = \`ccm create_task -s "Attività DBL. Controllo oggetti DB2 di \${consegna}~$6" -r dbl_sesi -platform AIX-DB_FIL -release \${VER} -subsystem \${subsys} | awk '{print (\$2)}'\`
+      ccm query -t task -name task\$N
+      ccm attr -c comitver -t string -v \${comitv} @1
+      ccm attr -c task_description -t string -v "Task di riferimento: task\${task}" @1
+    endif
+  endif
+
+#   ********************************************************************
+#   Check CMD in order to create a task for CSU -> SQA life-cicle.
+#   ********************************************************************
+
+  if ($6 == CSU || $6 == SQA) then
+    if ( \`cat ${CCM45_DBlog}/Delta.\${consegna} | grep -c CMD_FLAG\` ) then
+      set N = \`ccm create_task -s "Attività PRC. Controllo oggetti CMD di \${consegna}~$6" -r prc_sesi -platform AIX-DB_FIL -release \${VER} -subsystem \${subsys} | awk '{print (\$2)}'\`
+      ccm query -t task -name task\$N
+      ccm attr -c comitver -t string -v \${comitv} @1
+      ccm attr -c task_description -t string -v "Task di riferimento: task\${task}" @1
+      setenv REBOL_HOME /usr/CONT_SRV/rebol/home
+      /usr/CONT_SRV/rebol/script/mailer.r emailADV $6 prc_sesi \${N} \${subsys}\${comitv}
+    endif
+  endif
+# *****************************************************************
+# * Rimozione della directory di consegna dal server-os2 nel caso  
+# * di avvenuta distribuzione in Produzione.                       
+# *****************************************************************
+  if ($6 == PRD) then
+    rm -r ${LOCAL_DIR}/${consegna}
+  endif
+end
+
+ccm stop
+rm ${CCM45_DBlog}/$4EndSWD.LOCK &
+EndOfInput2
+
+
+#******************************************************************************        
+# Finito di scrivere lo script, e' stata scritta anche la sua autocancellazione
+# in background (avverra' dopo il lancio della script stessa, che segue qui sotto).
+# - commento di Romanini -                                                             
+#******************************************************************************        
+
+
+
+#**********************************************************************
+# Run the Script.
+#**********************************************************************
+
+source ${CCM45_DBlog}/$4EndSWD.LOCK &

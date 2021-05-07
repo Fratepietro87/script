@@ -1,0 +1,416 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                    ParserZip_script (DB_NTS)
+#*
+#* Parser sul software da copiare per decidere il tipo di copia necessaria
+#*
+#* Author: Brizzolara Luca 1999
+#* Modificato: Romanini dicembre 1999
+#*
+#***********************************************************************
+
+#**********************************************************************
+#* Parametri passati: $1 SWD_ROOT/AMBIENTE
+#*                    $2 AMBIENTE (cioe' CSU o SQA o PRD)
+#*                    $3 ftp,zip,dipart,all (quale softw. e dove installarlo)
+#* Tre tipi di copie vengono realizzate:
+#* 1) ftp per i database su Domino390
+#* 2) pkzip per i database su dipartimentale
+#* 3) mkzpfile per la parte strutturale
+#*
+#**********************************************************************
+
+set CCMDB = "/usr/CONT_SRV/ccmdb/DB_NTS"
+set SCRIPT_DIR = "${CCMDB}/lib/notify/Unix"
+set LOG_DIR = "${CCMDB}/lib/notify/log"
+set tabella = "${SCRIPT_DIR}/Tabella_applicativi"
+set INIFILE = "${SCRIPT_DIR}/ccmcpkzip_script.ini"
+set TABELLA_ERRORI = "${SCRIPT_DIR}/Tabella_Errori"
+ 
+ 
+#***************************************************************************
+#* Se esistono, cancello response.txt e response.txt.new - Romanini 24-12-99
+#***************************************************************************
+
+if ( -f $1/response.txt ) then
+  rm $1/response.txt
+endif
+
+
+if ( -f $1/response.txt.new ) then
+  rm $1/response.txt.new
+endif
+
+ 
+
+if ( ! -r "${INIFILE}" )  then
+  echo "MSG: non posso leggere il file ${INIFILE}" >> $1/response.txt
+  exit 14
+endif
+
+if (`cat ${INIFILE} |grep CONSEGNA_FILE_PREFIX|wc -l` != 0) then
+  set CONSEGNA_FILE_PREFIX = `cat ${INIFILE} |grep CONSEGNA_FILE_PREFIX |awk -F= '{ print $2 }'`
+else
+  echo "MSG:la variabile CONSEGNA_FILE_PREFIX non e' presente nel file ini." >> $1/response.txt
+  exit 15
+endif
+
+if (`cat ${INIFILE} |grep OUTDIR_PREFIX_OS2|wc -l` != 0) then
+  set OUTDIR_PREFIX_OS2 = `cat ${INIFILE} |grep OUTDIR_PREFIX_OS2 |awk -F= '{ print $2 }'`
+else
+  echo "MSG:la variabile OUTDIR_PREFIX_OS2 non e' presente nel file ini." >> $1/response.txt
+  exit 15
+endif
+
+if (`cat ${INIFILE} |grep FILE_SERVER|wc -l` != 0) then
+  set FILE_SERVER = `cat ${INIFILE} |grep FILE_SERVER |awk -F= '{ print $2 }'`
+else
+  echo "MSG:la variabile FILE_SERVER non e' presente nel file ini." >> $1/response.txt
+  exit 15
+endif
+
+
+echo "ParserZip_script: variabili file ini ok" 
+
+#**********************************************************************
+#*
+#* UNCOMPRESS SWD_ROOT/ENV
+#*
+#**********************************************************************
+
+find $1 -type f -print | xargs uncompress
+
+
+#***********************************************************************
+#* Cerco il numero di consegna corrente. Alla fine verifichero' se ho
+#* fatto degli zip e, in caso affermativo, aumentero' il numero contenuto
+#* nel file consegna corrispondente. Eseguo questa parte solo dopo avere
+#* verificato di avere degli zip da fare.
+#***********************************************************************
+
+set CONSEGNA_FILE = ${CONSEGNA_FILE_PREFIX}.$2
+if ( ! -r ${CONSEGNA_FILE} ) then
+  echo "Non posso leggere il ${CONSEGNA_FILE}" >> $1/response.txt
+  exit 16
+endif
+
+set CONSEGNA_FILE_BACKUP = ${CONSEGNA_FILE}.backup
+mv ${CONSEGNA_FILE} ${CONSEGNA_FILE_BACKUP}
+if (${status}) then
+  echo "Non posso rinominare il file CONSEGNA_FILE." >> $1/response.txt
+  echo "Un altro processo potrebbe averlo in uso." >> $1/response.txt
+  exit 17
+endif
+
+set CONSEGNA_NUM = `cat ${CONSEGNA_FILE_BACKUP}`
+set CONSEGNA_NUM3 = `echo ${CONSEGNA_NUM} |awk '{ printf "%.3d", $1}'`
+
+#***********************************************************************
+#* Inizializzo alcune variabili che mi serviranno per gli ZIP
+#***********************************************************************
+if ($2 == CSU) then
+  set CONSEGNA_AMBIENTE = "INT"
+else
+  if ($2 == SQA) then
+    set CONSEGNA_AMBIENTE = "COL"
+  else
+    if ($2 == PRD) then
+      set CONSEGNA_AMBIENTE = "PRD"
+    else
+      echo "$2 non ha mappatura per la creazione dgli zip"  >> $1/response.txt
+      exit 18
+    endif
+  endif
+endif
+
+set CONSEGNA = ${CONSEGNA_AMBIENTE}${CONSEGNA_NUM}
+
+#***********************************************************************
+#* Creo la directory per gli zip su OS2 e le sue sottodirectory
+#***********************************************************************
+set OUTDIR_OS2_UNIX = "${OUTDIR_PREFIX_OS2}/${CONSEGNA}"
+set OUTDIR_OS2 = `echo ${OUTDIR_OS2_UNIX} | awk '{gsub("\/","\\"); print $0}'`
+remsh ${FILE_SERVER} "md ${OUTDIR_OS2}"
+if (${status}) then
+  echo "Non posso creare la directory ${OUTDIR_OS2} su ${FILE_SERVER} " >> $1/response.txt
+  exit 26
+endif
+
+set OUTDIR_OS2_UNIX1 = "${OUTDIR_PREFIX_OS2}/${CONSEGNA}/dipart"
+set OUTDIR_OS2 = `echo ${OUTDIR_OS2_UNIX1} | awk '{gsub("\/","\\"); print $0}'`
+remsh ${FILE_SERVER} "md ${OUTDIR_OS2}"
+if (${status}) then
+  echo "Non posso creare la directory ${OUTDIR_OS2} su ${FILE_SERVER} " >> $1/response.txt
+  exit 27
+endif
+
+set OUTDIR_OS2_UNIX2 = "${OUTDIR_PREFIX_OS2}/${CONSEGNA}/dbnotes"
+set OUTDIR_OS2 = `echo ${OUTDIR_OS2_UNIX2} | awk '{gsub("\/","\\"); print $0}'`
+remsh ${FILE_SERVER} "md ${OUTDIR_OS2}"
+if (${status}) then
+  echo "Non posso creare la directory ${OUTDIR_OS2} su ${FILE_SERVER} " >> $1/response.txt
+  exit 28
+endif
+
+set FTP_CHECK = 0
+set DIP_CHECK = 0
+set ZIP_CHECK = 0
+
+if ( $3 == all ) then
+  set FTP_CHECK = 1
+  set DIP_CHECK = 1
+  set ZIP_CHECK = 1
+else
+  if ( $3 == ftp ) then
+    set FTP_CHECK = 1
+  else
+    if ( $3 == dip ) then
+      set DIP_CHECK = 1
+    else
+      if ( $3 == zip ) then
+        set ZIP_CHECK = 1
+      else
+        echo "Non e' stata indicata l'operazione da svolgere" >> $1/response.txt
+        exit 29
+      endif
+    endif
+  endif
+endif
+
+
+
+
+#***********************************************************************
+#* Poiche' quello che ho sotto NOTESDAT deve essere portato anche sotto 
+#* D390 via ftp, se c'e' la directory NOTESDAT ne copio il contenuto
+#* sotto NOTESDOM (creo la directory se non esiste) adattando il path
+#* al D390 (in NOTESDAT ho il path dipartimntale).
+#***********************************************************************
+set ELENCO_PROJECTS = `ls $1`
+foreach PROJECT (${ELENCO_PROJECTS})
+  set APPLICAZIONE = `echo ${PROJECT} |awk '{ print toupper($1) }'`
+  set PROJECT_BASE = $1"/"${PROJECT}
+  set LISTA_OGGETTI = "${LOG_DIR}/Delta.${APPLICAZIONE}.$2"
+  if ( -d ${PROJECT_BASE}/notesdat ) then
+    if ( ! -d ${PROJECT_BASE}/notesdom ) then
+      mkdir ${PROJECT_BASE}/notesdom
+    endif
+    if ( ! -d ${PROJECT_BASE}/notesfil ) then
+      mkdir ${PROJECT_BASE}/notesfil
+    endif
+    set elenco_drive = `ls ${PROJECT_BASE}/notesdat`
+    foreach drive (${elenco_drive})
+#######################################################################
+# Da non fare per problemi di gestioni repliche
+#      cp -R ${PROJECT_BASE}/notesdat/${drive} ${PROJECT_BASE}/notesfil
+#######################################################################
+      set sub_drive = ${PROJECT_BASE}"/notesdat/"${drive}"/notes/data"
+      set elenco_subdrive = `ls ${sub_drive}`
+      foreach directory (${elenco_subdrive})
+        if (-d ${sub_drive}/${directory} ) then
+          set seek_dir = ":"${directory}":"
+          set dir_nsf = `grep ${seek_dir} ${tabella}|grep $APPLICAZIONE | awk '{ print $3 }'`
+          set dir_ntf = `grep ${seek_dir} ${tabella}|grep $APPLICAZIONE | awk '{ print $4 }'`
+          set DIR_NSF = ${PROJECT_BASE}"/notesdom/"${dir_nsf}
+          set DIR_NTF = ${PROJECT_BASE}"/notesdom/"${dir_nsf}"/"${dir_ntf}
+#******************************************************************
+#* In questo punto in base alla tabellina e al nome della directory
+#* devo decidere il nome della directory di destinazione per gli
+#* *nsf DIR_NSF e quella per gli *.ntf DIR_NTF
+#******************************************************************
+          set dir_base = ${sub_drive}"/"${directory}
+          set elenco = `ls ${dir_base}`
+          foreach elemento ($elenco)
+            if (-d ${dir_base}/${elemento} ) then
+              set last_dir = ${dir_base}"/"${elemento}
+	      set fil_dir = `echo ${last_dir} |awk -v Old="/notesdat/" -v New="/notesfil/" '{ sub(Old,New); print $0 }'`
+              set elenco_file = `ls ${last_dir}`
+              foreach singolo (${elenco_file})
+                if (-f ${last_dir}/${singolo} ) then
+                  set estensione = `echo ${singolo} |awk -F. '{print tolower($2)}'`
+                  if ( ${estensione} != ntf) then
+                    if !( -d ${DIR_NSF} ) then
+                      mkdir -p ${DIR_NSF}
+                    endif
+                    cp ${last_dir}/${singolo} ${DIR_NSF}
+                  else
+                    if !( -d ${DIR_NTF} ) then
+                      mkdir -p ${DIR_NTF}
+                    endif
+                    cp ${last_dir}/${singolo} ${DIR_NTF}
+                  endif
+		  if (`grep "${singolo}.Z~1" ${LISTA_OGGETTI}|wc -l` != 0 ) then
+		    if !( -d ${fil_dir} ) then
+		      mkdir -p ${fil_dir}
+                    endif
+		    cp ${last_dir}/${singolo} ${fil_dir}
+                  endif
+                endif
+              end
+            else
+	      set fil_dir = `echo ${dir_base} |awk -v Old="/notesdat/" -v New="/notesfil/" '{ sub(Old,New); print $0 }'`
+              set estensione = `echo ${elemento} |awk -F. '{print tolower($2)}'`
+              if ( ${estensione} != ntf) then
+                if !( -d ${DIR_NSF} ) then
+                  mkdir -p ${DIR_NSF}
+                endif
+                cp ${dir_base}/${elemento} ${DIR_NSF}
+              else
+                if !( -d ${DIR_NTF} ) then
+                  mkdir -p ${DIR_NTF}
+                endif
+                cp ${dir_base}/${elemento} ${DIR_NTF}
+              endif
+	      if (`grep "${elemento}.Z~1" ${LISTA_OGGETTI}|wc -l` != 0 ) then
+	        if !( -d ${fil_dir} ) then
+	          mkdir  -p ${fil_dir}
+                endif
+	        cp ${dir_base}/${elemento} ${fil_dir}
+              endif
+            endif
+          end
+        else
+          if (-f ${sub_drive}/${directory} ) then
+            set DIR_NSF = ${PROJECT_BASE}"/notesdom/nts"
+            set DIR_NTF = ${PROJECT_BASE}"/notesdom/nts"
+            if !(-d ${DIR_NSF} ) then
+              mkdir -p ${DIR_NSF}
+            endif
+            if !(-d ${DIR_NTF} ) then
+              mkdir -p ${DIR_NTF}
+            endif
+            set estensione = `echo ${directory} |awk -F. '{print tolower($2)}'`
+            if ( ${estensione} == ntf) then
+              cp ${sub_drive}/${directory} ${DIR_NTF}
+            else
+              cp ${sub_drive}/${directory} ${DIR_NSF}
+            endif
+	    set fil_dir = `echo ${sub_drive} |awk -v Old="/notesdat/" -v New="/notesfil/" '{ sub(Old,New); print $0 }'`
+            if (`grep "${directory}~1" ${LISTA_OGGETTI}|wc -l` != 0 ) then
+	      if !( -d ${fil_dir} ) then
+	        mkdir  -p ${fil_dir}
+              endif
+	      cp ${sub_drive}/${directory} ${fil_dir}
+            endif
+          endif
+        endif
+      end
+    end
+#    rm -r ${PROJECT_BASE}/notesdat
+    rmdir ${PROJECT_BASE}/notesfil
+  endif
+end
+        
+        
+
+
+#***********************************************************************
+#* Inizio il parser; faccio un ls sotto SWD_ROOT/ENV. Per la struttura
+#* attuale dovrei trovare li sotto solo directory.
+#* A seconda del suo nome agisco con la seguente logica:
+#* 1)se la directory si chiama NOTESDOM faccio ftp;
+#* 2)se la directory si chiama NOTESFIL o NOTESDAT faccio lo zip normale
+#* 3)se la directory si chiama C o SERVER faccio lo zip con mkzpfile
+#***********************************************************************
+
+set LISTA = $1/db_notes.txt
+set ESISTENZA_ZIP = NO
+
+if ( -f ${LISTA} ) then
+  rm ${LISTA}
+endif
+ 
+set ELENCO_PROJECTS = `ls $1`
+ 
+foreach PROJECT (${ELENCO_PROJECTS})
+  set IDENTIFICATORE_ZIP = `echo ${PROJECT} |awk '{ print toupper($1) }'`
+  set BASE_DIR = $1"/"${PROJECT}
+  set ELENCO_DIR = `ls ${BASE_DIR}`
+ 
+  foreach DIR (${ELENCO_DIR})
+    if ( -d ${BASE_DIR}/${DIR} ) then
+      set DIRECTORY = `echo ${DIR} | awk '{print toupper($1)}'`
+ 
+      if ( ${DIRECTORY} == NOTESDOM ) then
+        if ( ${FTP_CHECK} ) then
+          ${SCRIPT_DIR}/ftp_script ${BASE_DIR} $2 ${PROJECT} ${CONSEGNA_NUM} ${DIR}
+        endif
+      endif
+ 
+      if ( ${DIRECTORY} == NOTESFIL ) then
+        if ( ${ZIP_CHECK} ) then
+          ${SCRIPT_DIR}/ccmzip_script ${BASE_DIR} notesfil ${IDENTIFICATORE_ZIP} ${CONSEGNA_NUM3} ${CONSEGNA} ${LISTA} $1
+          set ESITO = ${status}
+          if ( ${ESITO} > 0 ) then
+            mv ${CONSEGNA_FILE_BACKUP} ${CONSEGNA_FILE}
+            grep ${ESITO} ${TABELLA_ERRORI} >> $1/response.txt
+            exit ${ESITO}
+          endif
+#***********************************************************************
+#* Imposto il flag di esistenza di zip,ai fini del messaggio da mettere 
+#* nel task-log - Romanini 24-12-1999
+#***********************************************************************
+          set ESISTENZA_ZIP = SI
+        endif
+      endif
+ 
+      if ( ${DIRECTORY} == C ) then
+        if ( ${DIP_CHECK} ) then
+          ${SCRIPT_DIR}/ccmcpkzip_script $1 c ${CONSEGNA} ${IDENTIFICATORE_ZIP} ${CONSEGNA_NUM3} ${BASE_DIR}
+          set ESITO = ${status}
+          if ( ${ESITO} > 0 ) then
+            mv ${CONSEGNA_FILE_BACKUP} ${CONSEGNA_FILE}
+            grep ${ESITO} ${TABELLA_ERRORI} >> $1/response.txt
+            exit ${ESITO}
+          endif
+#***********************************************************************
+#* Imposto il flag di esistenza di zip,ai fini del messaggio da mettere
+#* nel task-log - Romanini 24-12-1999
+#***********************************************************************
+          set ESISTENZA_ZIP = SI
+        endif
+      endif
+ 
+      if ( ${DIRECTORY} == SERVER ) then
+        if ( ${DIP_CHECK} ) then
+          ${SCRIPT_DIR}/ccmcpkzip_script $1 server ${CONSEGNA} ${IDENTIFICATORE_ZIP} ${CONSEGNA_NUM3} ${BASE_DIR}
+          set ESITO = ${status}
+          if ( ${ESITO} > 0 ) then
+            mv ${CONSEGNA_FILE_BACKUP} ${CONSEGNA_FILE}
+            grep ${ESITO} ${TABELLA_ERRORI} >> $1/response.txt
+            exit ${ESITO}
+          endif
+#***********************************************************************
+#* Imposto il flag di esistenza di zip,ai fini del messaggio da mettere
+#* nel task-log - Romanini 24-12-1999
+#***********************************************************************
+          set ESISTENZA_ZIP = SI
+        endif
+      endif
+    endif
+  end
+end
+
+#***********************************************************************
+#* Si deve incrementare comunque il contatore di estrazione. 
+#***********************************************************************
+
+set NEW_CONSEGNA = `echo ${CONSEGNA_NUM} | awk '{ printf "%.5d",++$1 }'`
+echo ${NEW_CONSEGNA} > ${CONSEGNA_FILE_BACKUP}
+mv ${CONSEGNA_FILE_BACKUP} ${CONSEGNA_FILE}
+
+ 
+#***********************************************************************
+# Imposto il messaggio,con il numero della estrazione che sto
+# elaborando, nel response.txt(che poi comparira' nel task-log).
+# Romanini 24-12-1999
+#***********************************************************************
+
+if ( ${ESISTENZA_ZIP} == SI ) then
+  echo "Estrazione numero ${CONSEGNA_NUM3}" >> $1/response.txt
+endif
+
+ 
+exit 0
+

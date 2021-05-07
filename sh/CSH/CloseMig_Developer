@@ -1,0 +1,197 @@
+#!/bin/csh
+#***********************************************************************
+#*
+#*                       CloseMig_Developer
+#*
+#*
+#* Goal: compilare i sorgenti associati al task; verificare correttezza
+#*       compilazione siso; copiare eseguibili in MIG_ROOT/consegna;
+#*       creare task per chk_svi; migrare eseguibili in continuus;
+#*       associare oggetti migrati a task di chk_svi, ed associargli
+#*       la comitver;
+#*
+#* Parameters: $1 cod_opzione
+#*             $2 task_subsys
+#*             $3 comitver
+#*             $4 task_number
+#*             $5 task_synopsis
+#*             $6 creator
+#*             $7 resolver
+#*             $8 prerequisiti
+#*             $9 corequisiti
+#*
+#* Created by: Luca Brizzolara December 1999
+#*
+#***********************************************************************
+
+set CCM45_DB = "/usr/CONT_SRV/ccmdb/DB_GPM"
+set EXE_DIR = "${CCM45_DB}/lib/notify/Unix"
+set CCM45_DBlog = "${CCM45_DB}/lib/notify/log"
+set WA_ROOT = "/usr/CONT_SRV/ccm_wa/DB_GPM"
+set MIG_ROOT = "/usr/CONT_SRV/CONT_GPM"
+set MIG_LOCAL_ROOT = "/usr/CONT_SRV/MIG_DB_GPM"
+set LOCAL_WA_PATH = "/usr/CONT_SRV/dvp_dts/ccm_wa/DB_GPM"
+
+# **********************************************************************
+# Controllo il codice opzione
+# **********************************************************************
+
+if (($1 != "Modif.Interfaccia")&&($1 != "Modif.Programma")) then
+  exit 0
+endif
+
+# **********************************************************************
+# Set Environment Vars
+# **********************************************************************
+
+set VER = `echo $2$3 | awk '{print substr($1,1,5)}'`
+
+# **********************************************************************
+# Sezione di controlli
+# **********************************************************************
+if (-f ${CCM45_DBlog}/Mig.$2.LOCK) then
+  echo "MSG:ATTENZIONE e' gia' in corso una migrazione per $2"
+  echo "MSG: "
+  echo "MSG:Operazione Annullata.Il Task $4 rimane assegnato.Premere Close"
+  exit 1
+endif
+
+# **********************************************************************
+# Prima viene lanciata una script che realizza la compilazione e, in 
+# caso di esito positivo, copia il software in MIG_ROOT nella directory
+# di consegna; in caso negativo restituisce un valore diverso da zero
+# e il task resta assegnato, con un avviso a video.
+# **********************************************************************
+
+echo "Inizio procedura compilazione di $2$3" > ${CCM45_DBlog}/Mig.$2.LOCK
+
+setenv CCM_ADDR `ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}`
+ccm wa -setpath ${LOCAL_WA_PATH} $2~dvp_dts > /dev/null
+if ($1 == "Modif.Programma") then
+  ccm query "is_associated_object_of('task$4~1:task:probtrac')" -u -f "%objectname"|grep -v "\:dir\:"|awk -F~ '{ print $1 }' | xargs ${EXE_DIR}/Comp_program.script $2 $3 
+  if (${status}) then
+    ccm stop
+    echo "MSG:La compilazione ha dato esito negativo; il task resta assegnato"
+    echo "MSG: "
+    echo "MSG:Operazione Annullata.Il Task $4 rimane assegnato.Premere Close"
+    rm ${CCM45_DBlog}/Mig.$2.LOCK
+    exit 1
+  endif
+else
+  ccm query "is_associated_object_of('task$4~1:task:probtrac')" -u -f "%objectname"|grep -v "\:dir\:"|awk -F~ '{ print $1 }' | xargs ${EXE_DIR}/Comp_iface.script $2 $3
+  if (${status}) then
+    ccm stop
+    echo "MSG:La compilazione ha dato esito negativo; il task resta assegnato"
+    echo "MSG: "
+    echo "MSG:Operazione Annullata.Il Task $4 rimane assegnato.Premere Close"
+    rm ${CCM45_DBlog}/Mig.$2.LOCK
+    exit 1
+  endif
+endif
+ccm query -t task -n task$4
+set old_synps = `ccm attr -s task_synopsis @1`
+if ($1 == "Modif.Programma") then
+  set synps = "Modifica Programma $2$3~${old_synps}"
+else
+  set synps = "Modifica Interfaccia $2$3~${old_synps}"
+endif
+ccm attr -m task_synopsis -v "${synps}" @1
+ccm stop
+
+echo "Compilazione effettuata con esito positivo" >> ${CCM45_DBlog}/Mig.$2.LOCK
+
+cat > ${CCM45_DBlog}/DoMig.Developer <<EndOfInput1
+# **********************************************************************
+# Creo il task per chk_svi.
+# **********************************************************************
+
+setenv CCM_ADDR \`ccm start -m -q -nogui -r build_mgr  -d ${CCM45_DB}\`
+
+set Ntask = \`ccm create_task -s "Autorizzazione alla distribuzione in SQA di $2$3" -r chk_svi -platform HPUX-DB_GPM -release ${VER} -subsystem $2 | awk '{print (\$2)}'\`
+ccm query -t task -name task\${Ntask}
+ccm attr -c comitver -t string -v $3 @1
+ccm attr -c task_description -t string -v "Task di riferimento: task$4" @1
+ccm attr -m resolver -v " " @1
+
+# **********************************************************************
+# Migro il software il Continuus
+# **********************************************************************
+ccm work_area -wa -setpath ${WA_ROOT} $2~SVI
+
+ccm query "is_member_of($2~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/BfrMig.$2
+ccm migrate -d ${MIG_LOCAL_ROOT}/$2$3 -p $2~SVI -s integrate >> ${CCM45_DBlog}/Mig.$2.LOCK
+ccm query "is_member_of($2~SVI:project:1)" -u -f "ccm relate -n associated_cv -from task\${Ntask}~1:task:probtrac -to %objectname" > ${CCM45_DBlog}/AftMig.$2
+
+diff -b -e ${CCM45_DBlog}/BfrMig.$2 ${CCM45_DBlog}/AftMig.$2 |awk '/ {1,}/' > ${CCM45_DBlog}/Delta.$2$3
+
+source ${CCM45_DBlog}/Delta.$2$3
+
+echo "Delta.$2$3 Created" >> ${CCM45_DBlog}/Mig.$2.LOCK
+
+rm ${CCM45_DBlog}/BfrMig.$2
+rm ${CCM45_DBlog}/AftMig.$2
+
+# **********************************************************************
+# Sezione dove implementare eventualmente la creazione di un task per
+# dbl_sesi
+# **********************************************************************
+
+echo PREREQUISIT:$8 | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.$2$3
+echo COREQUISIT:$9 | awk '{ gsub(" ","",\$1);print toupper(\$1)}' FS="" >> ${CCM45_DBlog}/Delta.$2$3
+
+# **********************************************************************
+# Aggiorno la release-table
+# **********************************************************************
+
+# **********************************************************************
+# Salvo il valore del text_editor
+# **********************************************************************
+ccm set text_editor_orig "\`ccm set text_editor\`"
+
+# **********************************************************************
+# Estraggo il contenuto dell'attributo release table
+# **********************************************************************
+ccm set text_editor "cat %filename > ${CCM45_DBlog}/$2.tmp"
+ccm query -t admin -n base
+ccm attr -m releases @1
+set jj = \`grep ${VER} ${CCM45_DBlog}/$2.tmp | awk '{print substr(\$1,1,5)}'\`
+
+if ( ${VER} != \$jj )  then
+  echo ${VER}:  ${VER} > ${CCM45_DBlog}/$2.tmp
+  ccm set text_editor "cat ${CCM45_DBlog}/$2.tmp >> %filename"
+  ccm query -t admin -n base
+  ccm attr -m releases @1
+endif
+
+
+# **********************************************************************
+# Sorto il contenuto della release table
+# **********************************************************************
+ccm set text_editor "cat %filename > ${CCM45_DBlog}/$2.tmp;sort ${CCM45_DBlog}/$2.tmp > ${CCM45_DBlog}/$2.tmp1;mv ${CCM45_DBlog}/$2.tmp1 ${CCM45_DBlog}/$2.tmp;cat ${CCM45_DBlog}/$2.tmp > %filename"
+ccm query -t admin -n base
+ccm attr -m releases @1
+
+ccm set text_editor "\`ccm set text_editor_orig\`"
+ccm unset text_editor_orig
+
+rm ${CCM45_DBlog}/$2.tmp
+
+# **********************************************************************
+# Fine madifica release-table
+# **********************************************************************
+
+
+ccm query -t task -n task\${Ntask}
+
+ccm attr -c cod_opzione -t string -v "No_Action" @1
+ccm attr -m resolver -v chk_svi @1
+ccm attr -m cod_opzione -v "CheckForNextEnv" @1
+
+
+ccm stop
+
+rm ${CCM45_DBlog}/Mig.$2.LOCK
+EndOfInput1
+source ${CCM45_DBlog}/DoMig.Developer &
+exit 0
+
