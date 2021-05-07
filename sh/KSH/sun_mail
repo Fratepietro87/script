@@ -1,0 +1,39 @@
+#!/bin/sh
+###################################################################
+#
+#                        sun_mail
+#
+# Goal: Lanciare la mail, secondo i parametri preformattati dal
+#       genera_mail
+#
+# Parameters: $1 Subject
+#             $2 l'indirizzo (o lista di indirizzi)
+#             $3 file che contiene il testo della mail
+#
+#
+###################################################################
+
+#******************************************************************
+# Controllo il numero di parametri
+#******************************************************************
+if [ "$#" -le 2 ]; then
+  echo "Usage: $0 <subject> <recipients> <mail_content_file>"
+  exit 1
+fi
+
+#******************************************************************
+# Definisco il comando di mail da lanciare
+#******************************************************************
+mail_cmd="/usr/bin/mailx"
+
+#******************************************************************
+# Lancio la mail e ne testo il codice di ritorno
+#******************************************************************
+$mail_cmd -s "$1" $2 < $3
+status=$?
+
+#******************************************************************
+# Elimino il file contenente il testo
+#******************************************************************
+rm -rf $3
+exit $status

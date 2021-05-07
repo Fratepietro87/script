@@ -1,0 +1,119 @@
+#!/bin/sh
+
+#  Description: Script to show host ID for ccm license manager		
+
+#  %created_by:	ndjc %
+
+#  %date_created: Wed Jan 21 00:30:03 1998 %
+#  %filespec: ccm_hostid-3 %
+
+
+
+CCM_HOME=${CCM_HOME-/usr/local/ccm}
+
+
+os=`uname -s`
+
+host=`uname -n`
+
+
+case "$os" in
+
+  SunOS)
+
+	model=`uname -m`
+
+	machtype="Sun $model"
+
+	vers=`uname -r`
+
+	case "$vers" in
+
+	  5*)
+
+		if	[ -x /usr/ucb/hostid ]
+
+		then	machid=`/usr/ucb/hostid`
+
+		else	machid=`/etc/sysdef -h |grep -v '*'`
+
+		fi
+
+		machtype="$machtype Solaris"
+
+		;;
+
+
+	  4*)
+
+		machid=`/usr/bin/hostid`
+
+		machtype="$machtype SunOS"
+		;;
+	esac
+
+	;;
+
+
+  HP-UX)
+
+	model=`uname -m`
+
+        machtype="HP $model"
+
+	machid=`/bin/uname -i`
+
+	;;
+
+
+  AIX)
+
+	machtype="IBM RS/6000"
+
+	machid=`/bin/uname -m`
+
+	;;
+
+
+  IRIX|IRIX64)
+
+	machtype="SGI"
+
+	machid=`sysinfo -s`
+
+	;;
+
+  OSF1)
+
+	machtype="DEC Alpha"
+
+	machid=`$CCM_HOME/bin/util/ccm_hostid_alpha |
+
+		sed -e 's/.* = //' -e 's/://g'`
+
+	;;
+
+ SINIX-N|SINIX-Y)
+
+	model=`uname -m`
+
+	machtype="Siemens $model"
+
+        machid=`hostid | sed 's/^[A-Z]*//'`
+
+    ;;
+
+  *)
+
+	echo "Continuus/CM does not yet recognize the machine '`uname -a`'"
+
+	exit 1
+
+	;;
+
+esac
+
+
+echo "Machine ID for \"$host\" ($machtype) is: $machid"
+
+exit 0

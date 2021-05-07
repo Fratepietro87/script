@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+#  Script:			pt_script
+#  Instance:		notify
+#  %version:		1 %
+#  Description:		
+#  %created_by:		tomf %
+#  %date_created:	Tue May 21 11:20:24 1996 %
+
+echo "MSG:$1 was assigned a problem or task"
+
+exit 0

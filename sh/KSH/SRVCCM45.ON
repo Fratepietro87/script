@@ -1,0 +1,18 @@
+#!/bin/sh
+#
+# Continuus Startup
+#
+set CCM_HOME  /usr/CONT_SRV/ccm45
+set PATH  $CCM_HOME/bin:$PATH
+rm -f $CCM_HOME/etc/.router_addr
+echo ""
+echo " * Starting Continuus Daemons."
+su - ccm_root -c ccm_start_daemons 
+#
+# INFORMIX Startup
+#
+set CCM_HOME  /usr/CONT_SRV/ccm45
+set PATH  $CCM_HOME/bin:$CCM_HOME/informix/bin:$PATH
+echo " * Starting INFORMIX Daemons."
+su - informix -c "ccmdb_server -on ccm_server -y" 
+exit 0

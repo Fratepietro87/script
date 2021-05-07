@@ -1,0 +1,15 @@
+#!/bin/sh
+#
+#  Script:			post_script
+#  Instance:		notify
+#  %version:		1 %
+#  Description:		
+#  %created_by:		tomf %
+#  %date_created:	Tue May 21 11:19:13 1996 %
+
+echo "MSG:$1 just transitioned an object to $2"
+#echo "ATTR_SET:post_set:string:post set value"
+#echo "ATTR_ADD:new_attr:text:first line"
+#echo "ATTR_ADD:new_attr:text:second line"
+
+exit 0

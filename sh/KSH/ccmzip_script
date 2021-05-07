@@ -1,0 +1,133 @@
+#!/bin/ksh 
+##############################################################################
+#
+#                      ccmzip_script
+#
+#	Delivery procedure for non-HPS software
+#
+# Parametri: $1 /usr/CONT_SRV/SWD_NTS/AMBIENTE/PROGETTO
+#            $2 sotto_directory (notesdat o notesfil)
+#            $3 PROGETTO (NTS o GCF)
+#            $4 CONSEGNA_NUM3
+#            $5 CONSEGNA
+#            $6 LISTA (es. /usr/CONT_SRV/SWD_NTS/CSU/db_notes.txt)
+#            $7 /usr/CONT_SRV/SWD_NTS/AMBIENTE
+##############################################################################
+
+##############################################################################
+#	Assign input parameters
+##############################################################################
+
+DIRIN=$1"/"$2
+INIFILE=/usr/CONT_SRV/ccmdb/DB_NTS/lib/notify/Unix/ccmcpkzip_script.ini
+EXEDIR=/usr/CONT_SRV/ccmdb/DB_NTS/lib/notify/Unix
+
+##############################################################################
+#	check ini file exists and readable
+##############################################################################
+
+if [ ! -r "$INIFILE" ] 
+then
+  exit 11
+fi
+
+##############################################################################
+#	Read ini file
+##############################################################################
+
+SWDIR_PREFIX_OS2=
+SWDIR_PREFIX_AIX=
+FILE_SERVER=
+OUTDIR_PREFIX_OS2=
+
+cat $INIFILE |&
+while true; do
+  read -p LINE
+  if [ -z "$LINE" ] ; then
+    break; 
+  fi
+  VAR=`echo $LINE | awk -F= '{split($0,A); print A[1]}'`  
+  VAL=`echo $LINE | awk -F= '{split($0,A); print A[2]}'`  
+  case "$VAR" in
+    "SWDIR_PREFIX_OS2" ) SWDIR_PREFIX_OS2=$VAL;;
+    "SWDIR_PREFIX_AIX" ) SWDIR_PREFIX_AIX=$VAL;;
+    "FILE_SERVER" ) FILE_SERVER=$VAL;;
+    "OUTDIR_PREFIX_OS2" ) OUTDIR_PREFIX_OS2=$VAL;;
+  * ) ;;
+  esac
+done
+
+echo Info:  INI file variables:
+echo Info:  read SWDIR_PREFIX_OS2 = $SWDIR_PREFIX_OS2
+echo Info:  read SWDIR_PREFIX_AIX = $SWDIR_PREFIX_AIX
+echo Info:  read FILE_SERVER = $FILE_SERVER
+echo Info:  read OUTDIR_PREFIX_OS2 = $OUTDIR_PREFIX_OS2
+
+##############################################################################
+#	check ini variables are present
+##############################################################################
+
+
+if [ -z "$SWDIR_PREFIX_OS2" ]
+then
+  exit 13
+fi
+
+if [ -z "$SWDIR_PREFIX_AIX" ]
+then
+  exit 13
+fi
+
+if [ -z "$FILE_SERVER" ]
+then
+  exit 13
+fi
+
+if [ -z "$OUTDIR_PREFIX_OS2" ]
+then
+  exit 13
+fi
+
+##############################################################################
+# Esamino la struttura; suppongo di avere mandato in DIRIN il percorso 
+# completo, cioe' NOTESDAT/E/NOTES/DATA o i percorsi alternativi
+##############################################################################
+
+
+DIRLIST=`ls $DIRIN`
+for DIR in $DIRLIST
+do 
+  if [ -d "$DIRIN/$DIR" ]
+  then
+    ZIP_CHAR=`echo $DIR |awk '{ print toupper($1) }'`
+    DIR_BASE=$DIRIN"/"$DIR
+    find $DIR_BASE -type f |awk -F "/$DIR/" '{ print $2 }' |xargs ${EXEDIR}/Remsh_Zip $ZIP_CHAR $3 $4 $SWDIR_PREFIX_AIX $SWDIR_PREFIX_OS2 $FILE_SERVER $OUTDIR_PREFIX_OS2 $DIR_BASE $5 $6 $7 
+    rc=$?
+    if [ $rc -ne 0 ]
+    then
+      exit 25
+    fi
+    if [ `cat $6 | grep "Errore nello zip" |wc -l` -ne 0 ] 
+    then
+      exit 25
+    fi
+  fi
+done
+
+    
+##############################################################################
+# Copia la lista sulla destinazione
+##############################################################################
+
+COPY_SOURCE=`echo $6 | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0 }'`
+COPY_TARGET="${OUTDIR_PREFIX_OS2}/$5/"
+COPY_TARGET=`echo $COPY_TARGET | awk '{gsub("\/","\\\\"); print $0 }'`
+remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"
+rc=$?
+if [ $rc -ne 0 ]
+then
+  exit 24
+fi
+
+
+exit 0

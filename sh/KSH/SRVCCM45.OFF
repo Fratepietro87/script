@@ -1,0 +1,18 @@
+#!/bin/sh
+#
+# INFORMIX Startup
+#
+set CCM_HOME  /usr/CONT_SRV/ccm45
+set PATH  $CCM_HOME/bin:$CCM_HOME/informix/bin:$PATH
+echo " * HALT INFORMIX Daemons."
+su - informix -c "ccmdb_server -offline ccm_server -y" 
+#
+# Continuus Startup
+#
+set CCM_HOME  /usr/CONT_SRV/ccm45
+set PATH  $CCM_HOME/bin:$PATH
+rm -f $CCM_HOME/etc/.router_addr
+echo ""
+echo " * HALT Continuus Daemons."
+su - ccm_root -c ccm_stop_daemons 
+exit 0

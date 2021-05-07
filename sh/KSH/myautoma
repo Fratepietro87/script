@@ -1,0 +1,630 @@
+#!/bin/ksh
+#
+#  Script:		myautoma
+#  Instance:		notify
+#  %version:		1 %
+#  Description:		Sessione automatica CCM
+#  %created_by:		SELESTA G.C.A.
+#  %date_created:	22 Novembre 1999
+
+
+
+function mainloop
+{
+#
+# Partenza ed installazione (MAINLOOP)
+#
+
+#
+# Funzionamento a regime
+#
+cond=0
+while [ $cond -eq 0 ];
+do
+        sleep 5
+        if [ -f $DBAREA/billing/lib/notify/Unix/myflag ]??????????????????????
+        then
+                #
+                # Rimozione del file flag
+                #
+                rm $DBAREA/billing/lib/notify/Unix/myflag ???????????????????????
+
+		#
+		# Settaggio delle variabili
+		#
+		. $DBAREA/billing/lib/notify/Unix/myflag.set ??????????????????????
+
+		
+		case "$MFROMSTEP" in
+        	"Stesura Analisi Fattibilita") ????????????????????????????
+			# STATO 1
+                  # Se non esistono altri task in stato assigned appartenenti a questo step, 
+			# viene generata l'attivita' del passo 2
+			#
+                	ccm query -t task "platform='Stesura Analisi Fattibilita' and status='task_assigned'" ????????????
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 1. Non si transita di stato.
+				echo "Attivita' pendenti in fase 1" ?????????????????????????
+			else
+                		ccm query -t task "platform='Stesura Analisi Fattibilita' and status='completed'" ???????????
+				echo Transizione 1-2  ????????????????
+				echo "Attivazione passo 2" ??????????????
+				ccm attr -modify platform -v "Stesura Analisi Fattibilita-done" @ ???????????????'
+				#
+				# Impostazione del destinatario dell'attivita'
+				#
+				resp="ccm_root" ???????????????????????????  
+	
+	                        ccm task -cr -s "Stesura analisi funzionale (documento SF_CR_$MCHANGER)" -r $resp -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Stesura analisi funzionale (documento SF_CR_$MCHANGER)'" 
+				ccm query -t task "platform='xxx'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Stesura Analisi Funzionale" @
+				ccm attr -modify release -v "$MRELEASE" @
+			fi			
+			retcode=0	
+	                ;;
+        	"Stesura Analisi Funzionale")
+			# STATO 2
+                        # Se non esistono altri task in stato assigned appartenenti a questo step, 
+			# viene generata l'attivita' del passo 3
+			#
+                	ccm query -t task "platform='Stesura Analisi Funzionale' and status='task_assigned'"
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 2. Non si transita di stato.
+				echo "Attivita' pendenti in fase 2"
+			else
+                		ccm query -t task "platform='Stesura Analisi Funzionale' and status='completed'"
+				echo Transizione 2-3
+				echo "Attivazione passo 3"
+				ccm attr -modify platform -v "Stesura Analisi Funzionale-done" @
+				#
+				# Impostazione del destinatario dell'attivita'
+				#
+				#resp="mmarang"
+				resp="ccm_root"
+	
+	                        ccm task -cr -s "Stesura specifica tecnica (documento ST_CR_$MCHANGER)" -r $resp -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Stesura specifica tecnica (documento ST_CR_$MCHANGER)'" 
+				ccm query -t task "platform='xxx'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Stesura Specifiche Tecniche" @
+				ccm attr -modify release -v "$MRELEASE" @
+			fi			
+			retcode=0	
+	                ;;
+        	"Stesura Specifiche Tecniche")
+			# STATO 3
+                        # Se non esistono altri task in stato assigned appartenenti a questo step, 
+			# viene generata l'attivita' del passo 4
+			#
+                	ccm query -t task "platform='Stesura Specifiche Tecniche' and status='task_assigned'"
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 3. Non si transita di stato.
+				echo "Attivita' pendenti in fase 3"
+			else
+                		ccm query -t task "platform='Stesura Specifiche Tecniche' and status='completed'"
+				echo Transizione 3-4
+				echo "Attivazione passo 4"
+				ccm attr -modify platform -v "Stesura Specifiche Tecniche-done" @
+				#
+				# Impostazione del destinatario delle attivita'
+				#
+				respsvil="ccm_root"
+				#resptb="mmarang"
+				#respme="smalinv"
+				resptb="ccm_root"
+				respme="ccm_root"
+	
+				#
+				# Blocco attivita' per lo SVILUPPO
+				#
+	                        ccm task -cr -s "Inizio fase di sviluppo. (CR:$MCHANGER Stadio operativo:Sviluppo)" -r $respsvil -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Inizio fase di sviluppo. (CR:$MCHANGER Stadio operativo:Sviluppo)'" 
+				ccm query -t task "platform='xxx'"
+#				ccm query -t task "status='task_assigned'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Sviluppo" @
+				ccm attr -modify release -v "$MRELEASE" @
+	                        
+				ccm task -cr -s "Stesura PDN a fine lavori (documento PDN_CR_$MCHANGER)" -r $respsvil -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Stesura PDN a fine lavori (documento PDN_CR_$MCHANGER)'" 
+				ccm query -t task "platform='xxx'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Sviluppo" @
+				ccm attr -modify release -v "$MRELEASE" @
+	
+				#
+				# Blocco attivita' per il TEST BOOK
+				#
+	                        ccm task -cr -s "Stesura Test Book (documento TB_CR_$MCHANGER)" -r $resptb -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Stesura Test Book (documento TB_CR_$MCHANGER)'" 
+				ccm query -t task "platform='xxx'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Stesura Manuale Esercizio" @
+				ccm attr -modify release -v "$MRELEASE" @
+	
+				#
+				# Blocco attivita' per il MANUALE DI ESERCIZIO
+				#
+	                        ccm task -cr -s "Stesura Manuale di Esercizio (documento ME_CR_$MCHANGER)" -r $respme -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Stesura Manuale di Esercizio (documento ME_CR_$MCHANGER)'" 
+				ccm query -t task "platform='xxx'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Stesura Documentazione Utente" @
+				ccm attr -modify release -v "$MRELEASE" @
+				
+				#
+				# Blocco attivita' per il MANUALE UTENTE
+				#
+	                        ccm task -cr -s "Stesura Manuale Utente (documento MU_CR_$MCHANGER)" -r $respme -rel $MRELEASE -plat xxx
+#				ccm query -t task "task_synopsis='Stesura Manuale Utente (documento MU_CR_$MCHANGER)'" 
+				ccm query -t task "platform='xxx'"
+				ccm attr -c change_req_num -t string -v "$MCHANGER" @
+				ccm attr -c bug_num -t string -v "$MBUG" @
+				ccm attr -modify platform -v "Stesura Documentazione Utente" @
+				ccm attr -modify release -v "$MRELEASE" @
+			fi			
+			retcode=0	
+	                ;;
+        	"Sviluppo")
+			# STATO 4a
+                        # Se non esistono altri task in stato assigned appartenenti a questo step, e allo step 4b
+			# viene generata l'attivita' del passo 5
+			#
+                	ccm query -t task "platform='Sviluppo' and status='task_assigned'"
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 4a. Non si transita di stato.
+				echo "Attivita' pendenti in fase 4a"
+			else
+                		ccm query -t task "platform='Stesura Manuale Esercizio' and status='task_assigned'"
+				if [ $? -eq 0 ] 
+				then
+					# Ci sono ancora attivita' pendenti in fase 4b. Non si transita di stato.
+					echo "Attivita' pendenti in fase 4b"
+				else
+       		         		ccm query -t task "platform='Sviluppo' and status='completed'"
+					echo Transizione 4-5
+					echo "Attivazione passo 5"
+					ccm attr -modify platform -v "Sviluppo-done" @
+       		         		
+					ccm query -t task "platform='Stesura Manuale Esercizio' and status='completed'"
+					ccm attr -modify platform -v "Stesura Manuale Esercizio-done" @
+					#
+					# Impostazione del destinatario dell'attivita'
+					#
+					resp="ccm_root"
+		
+		                        ccm task -cr -s "Inizio fase di Test. (CR:$MCHANGER Stadio operativo:Test)" -r $resp -rel $MRELEASE -plat xxx
+#					ccm query -t task "task_synopsis='Inizio fase di Test. (CR:$MCHANGER Stadio operativo:Test)'" 
+					ccm query -t task "platform='xxx'"
+				#	ccm query -t task "status='task_assigned'"
+					ccm attr -c change_req_num -t string -v "$MCHANGER" @
+					ccm attr -c bug_num -t string -v "$MBUG" @
+					ccm attr -modify platform -v "Test" @
+					ccm attr -modify release -v "$MRELEASE" @
+	                        
+					ccm task -cr -s "Stesura Test Report (documento TR_CR_$MCHANGER)" -r $resp -rel $MRELEASE -plat xxx
+#					ccm query -t task "task_synopsis='Stesura Test Report (documento TR_CR_$MCHANGER)'" 
+					ccm query -t task "platform='xxx'"
+					ccm attr -c change_req_num -t string -v "$MCHANGER" @
+					ccm attr -c bug_num -t string -v "$MBUG" @
+					ccm attr -modify platform -v "Test" @
+					ccm attr -modify release -v "$MRELEASE" @
+				fi
+			fi			
+			retcode=0	
+	                ;;
+        	"Stesura Manuale Esercizio")
+			# STATO 4b
+                        # Se non esistono altri task in stato assigned appartenenti a questo step, e allo step 4a
+			# viene generata l'attivita' del passo 5
+			#
+                	ccm query -t task "platform='Stesura Manuale Esercizio' and status='task_assigned'"
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 4b. Non si transita di stato.
+				echo "Attivita' pendenti in fase 4b"
+			else
+                		ccm query -t task "platform='Sviluppo' and status='task_assigned'"
+				if [ $? -eq 0 ] 
+				then
+					# Ci sono ancora attivita' pendenti in fase 4a. Non si transita di stato.
+					echo "Attivita' pendenti in fase 4a"
+				else
+       		         		ccm query -t task "platform='Stesura Manuale Esercizio' and status='completed'"
+					echo Transizione 4-5
+					echo "Attivazione passo 5"
+					ccm attr -modify platform -v "Stesura Manuale Esercizio-done" @
+       		         		
+					ccm query -t task "platform='Sviluppo' and status='completed'"
+					ccm attr -modify platform -v "Sviluppo-done" @
+					#
+					# Impostazione del destinatario dell'attivita'
+					#
+					resp="ccm_root"
+		
+		                        ccm task -cr -s "Inizio fase di Test. (CR:$MCHANGER Stadio operativo:Test)" -r $resp -rel $MRELEASE -plat xxx
+#					ccm query -t task "task_synopsis='Inizio fase di Test. (CR:$MCHANGER Stadio operativo:Test)'" 
+					ccm query -t task "platform='xxx'"
+#					ccm query -t task "status='task_assigned'"
+					ccm attr -c change_req_num -t string -v "$MCHANGER" @
+					ccm attr -c bug_num -t string -v "$MBUG" @
+					ccm attr -modify platform -v "Test" @
+					ccm attr -modify release -v "$MRELEASE" @
+	                        
+					ccm task -cr -s "Stesura Test Report (documento TR_CR_$MCHANGER)" -r $resp -rel $MRELEASE -plat xxx
+#					ccm query -t task "task_synopsis='Stesura Test Report (documento TR_CR_$MCHANGER)'" 
+					ccm query -t task "platform='xxx'"
+					ccm attr -c change_req_num -t string -v "$MCHANGER" @
+					ccm attr -c bug_num -t string -v "$MBUG" @
+					ccm attr -modify platform -v "Test" @
+					ccm attr -modify release -v "$MRELEASE" @
+				fi
+			fi			
+			retcode=0	
+	                ;;
+        	"Stesura Documentazione Utente")
+			# STATO 4c
+                        # Se non esistono altri task in stato assigned appartenenti a questo step, e allo step 5
+			# viene generata l'attivita' del passo 6 (Possibile chiusura della CR
+			#
+                	ccm query -t task "platform='Stesura Documentazione Utente' and status='task_assigned'"
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 4c. Non si transita di stato.
+				echo "Attivita' pendenti in fase 4c"
+			else
+                		ccm query -t task "platform='Test' and status='task_assigned'"
+				if [ $? -eq 0 ] 
+				then
+					# Ci sono ancora attivita' pendenti in fase 5. Non si transita di stato.
+					echo "Attivita' pendenti in fase 5"
+				else
+       		         		ccm query -t task "platform='Test' and status='completed'"
+					echo Transizione 5-6
+					echo "Attivazione passo 5"
+					ccm attr -modify platform -v "Test-done" @
+       		         		
+					ccm query -t task "platform='Stesura Documentazione Utente' and status='completed'"
+					ccm attr -modify platform -v "Stesura Documentazione Utente-done" @
+					#
+					# Impostazione del destinatario dell'attivita'
+					#
+					resp="ccm_root"
+						
+					#
+					# Controllo di conclusione di tutte le attivita' nelle varie fasi
+					#
+					warning=0
+                			ccm query -t task "platform='Stesura Analisi Fattibilita' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 1. 
+						echo "Attivita' pendenti in fase 1"
+						F1="Stesura Analisi Fattibilita"
+						warning=1
+					fi
+                			ccm query -t task "platform='Stesura Analisi Funzionale' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 2. 
+						echo "Attivita' pendenti in fase 2"
+						F2="Stesura Analisi Funzionale"
+						warning=1
+					fi
+                			ccm query -t task "platform='Stesura Specifiche Tecniche' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 3. 
+						echo "Attivita' pendenti in fase 3"
+						F3="Stesura Specifica Tecnica"
+						warning=1
+					fi
+                			ccm query -t task "platform='Sviluppo' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 4a. 
+						echo "Attivita' pendenti in fase 4a"
+						F4a="Sviluppo"
+						warning=1
+					fi
+                			ccm query -t task "platform='Stesura Manuale Esercizio' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 4b. 
+						echo "Attivita' pendenti in fase 4b"
+						F4b="Stesura Test Book"
+						warning=1
+					fi
+		
+					if [ $warning -eq 0 ]
+					then
+						#
+						# Generazione attivita' di chiusura CR
+						#
+			                        ccm task -cr -s "Formalizzare la chiusura della CR $MCHANGER. Tutte le attivita sono state completate)" -r $resp -rel $MRELEASE -plat xxx
+#						ccm query -t task "task_synopsis='Formalizzare la chiusura della CR $MCHANGER. Tutte le attivita sono state completate)'" 
+						ccm query -t task "platform='xxx'"
+#						ccm query -t task "status='task_assigned'"
+						ccm attr -c change_req_num -t string -v "$MCHANGER" @
+						ccm attr -c bug_num -t string -v "$MBUG" @
+						ccm attr -modify platform -v "Rilascio" @
+						ccm attr -modify release -v "$MRELEASE" @
+						#
+						# Blocco attivita' per il HAND OFF
+						#
+			                        ccm task -cr -s "Stesura Hand Off (documento HO_CR_$MCHANGER)" -r $resp -rel $MRELEASE -plat xxx
+#						ccm query -t task "task_synopsis='Stesura Hand Off (documento HO_CR_$MCHANGER)'" 
+						ccm query -t task "platform='xxx'"
+						ccm attr -c change_req_num -t string -v "$MCHANGER" @
+						ccm attr -c bug_num -t string -v "$MBUG" @
+						ccm attr -modify platform -v "Rilascio" @
+						ccm attr -modify release -v "$MRELEASE" @
+					else
+						#
+						# Generazione attivita' Warning su chiusura CR
+						#
+			                        ccm task -cr -s "WARNING la CR $MCHANGER ha attivita NON concluse in $F1, $F2, $F3, $F4a, $F4b)" -r $resp -rel $MRELEASE -plat xxx
+#						ccm query -t task "task_synopsis='WARNING la CR $MCHANGER ha attivita NON concluse in $F1, $F2, $F3, $F4a, $F4b'" 
+						ccm query -t task "platform='xxx'"
+#						ccm query -t task "status='task_assigned'"
+						ccm attr -c change_req_num -t string -v "$MCHANGER" @
+						ccm attr -c bug_num -t string -v "$MBUG" @
+						ccm attr -modify platform -v "Rilascio" @
+						ccm attr -modify release -v "$MRELEASE" @
+					fi
+				fi
+			fi			
+			retcode=0	
+	                ;;
+        	"Test")
+			# STATO 5
+                        # Se non esistono altri task in stato assigned appartenenti a questo step, e allo step 4c
+			# viene generata l'attivita' del passo 6 (Possibile chiusura della CR
+			#
+                	ccm query -t task "platform='Test' and status='task_assigned'"
+			if [ $? -eq 0 ] 
+			then
+				# Ci sono ancora attivita' pendenti in fase 5. Non si transita di stato.
+				echo "Attivita' pendenti in fase 5"
+			else
+                		ccm query -t task "platform='Stesura Documentazione Utente' and status='task_assigned'"
+				if [ $? -eq 0 ] 
+				then
+					# Ci sono ancora attivita' pendenti in fase 4c. Non si transita di stato.
+					echo "Attivita' pendenti in fase 4c"
+				else
+       		         		ccm query -t task "platform='Test' and status='completed'"
+					echo Transizione 5-6
+					echo "Attivazione passo 5"
+					ccm attr -modify platform -v "Test-done" @
+       		         		
+					ccm query -t task "platform='Stesura Documentazione Utente' and status='completed'"
+					ccm attr -modify platform -v "Stesura Documentazione Utente-done" @
+					#
+					# Impostazione del destinatario dell'attivita'
+					#
+					resp="ccm_root"
+						
+					#
+					# Controllo di conclusione di tutte le attivita' nelle varie fasi
+					#
+					warning=0
+                			ccm query -t task "platform='Stesura Analisi Fattibilita' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 1. 
+						echo "Attivita' pendenti in fase 1"
+						F1="Stesura Analisi Fattibilita"
+						warning=1
+					fi
+                			ccm query -t task "platform='Stesura Analisi Funzionale' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 2. 
+						echo "Attivita' pendenti in fase 2"
+						F2="Stesura Analisi Funzionale"
+						warning=1
+					fi
+                			ccm query -t task "platform='Stesura Specifiche Tecniche' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 3. 
+						echo "Attivita' pendenti in fase 3"
+						F3="Stesura Specifica Tecnica"
+						warning=1
+					fi
+                			ccm query -t task "platform='Sviluppo' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 4a. 
+						echo "Attivita' pendenti in fase 4a"
+						F4a="Sviluppo"
+						warning=1
+					fi
+                			ccm query -t task "platform='Stesura Manuale Esercizio' and status='task_assigned'"
+					if [ $? -eq 0 ] 
+					then
+						# Ci sono ancora attivita' pendenti in fase 4b. 
+						echo "Attivita' pendenti in fase 4b"
+						F4b="Stesura Test Book"
+						warning=1
+					fi
+		
+					if [ $warning -eq 0 ]
+					then
+						#
+						# Generazione attivita' di chiusura CR
+						#
+			                        ccm task -cr -s "Formalizzare la chiusura della CR $MCHANGER. Tutte le attivita sono state completate)" -r $resp -rel $MRELEASE -plat xxx
+#						ccm query -t task "task_synopsis='Formalizzare la chiusura della CR $MCHANGER. Tutte le attivita sono state completate)'" 
+						ccm query -t task "platform='xxx'"
+#						ccm query -t task "status='task_assigned'"
+						ccm attr -c change_req_num -t string -v "$MCHANGER" @
+						ccm attr -c bug_num -t string -v "$MBUG" @
+						ccm attr -modify platform -v "Rilascio" @
+						ccm attr -modify release -v "$MRELEASE" @
+						#
+						# Blocco attivita' per il HAND OFF
+						#
+			                        ccm task -cr -s "Stesura Hand Off (documento HO_CR_$MCHANGER)" -r $resp -rel $MRELEASE -plat xxx
+#						ccm query -t task "task_synopsis='Stesura Hand Off (documento HO_CR_$MCHANGER)'" 
+						ccm query -t task "platform='xxx'"
+						ccm attr -c change_req_num -t string -v "$MCHANGER" @
+						ccm attr -c bug_num -t string -v "$MBUG" @
+						ccm attr -modify platform -v "Rilascio" @
+						ccm attr -modify release -v "$MRELEASE" @
+					else
+						#
+						# Generazione attivita' Warning su chiusura CR
+						#
+			                        ccm task -cr -s "WARNING la CR $MCHANGER ha attivita NON concluse in $F1, $F2, $F3, $F4a, $F4b)" -r $resp -rel $MRELEASE -plat xxx
+#						ccm query -t task "task_synopsis='WARNING la CR $MCHANGER ha attivita NON concluse in $F1, $F2, $F3, $F4a, $F4b'" 
+						ccm query -t task "platform='xxx'"
+#						ccm query -t task "status='task_assigned'"
+						ccm attr -c change_req_num -t string -v "$MCHANGER" @
+						ccm attr -c bug_num -t string -v "$MBUG" @
+						ccm attr -modify platform -v "Rilascio" @
+						ccm attr -modify release -v "$MRELEASE" @
+					fi
+				fi
+			fi			
+			retcode=0	
+	                ;;
+		esac
+        else
+                 echo "Nessuna Attivita Completata"
+        fi
+        if [ -f $DBAREA/billing/lib/notify/Unix/automa_off ]
+        then
+                cond=1
+        fi
+done
+
+}
+
+
+
+#
+# Controllo parametri di lancio
+#
+# ON : Installazione della sessione automatica
+# OFF: Rimozione della sessione automatica
+# STAT: Controllo dello stato della sessione automatica
+
+case "$1" in
+        ON)
+		#
+		# Partenza ed installazione 
+		#
+		echo 
+                echo ------------------------------------------------------------------------------------
+		echo SELESTA G.C.A. Professional Services
+		echo ====================================
+		echo Sessione automatica Continuus
+		echo Management del ciclo di vita
+                echo ------------------------------------------------------------------------------------
+		echo 
+		if [ -f $DBAREA/billing/lib/notify/Unix/automa_on ]
+		then
+			echo "La Sessione automatica di management risulta ATTIVA"
+			echo 
+			retcode=0
+		else
+			echo AUTOMA STARTED>./automa_on
+			rm ./automa_off
+
+			#ccm start -d $DBAREA/billing -m -nogui
+			
+			CCM_ADDR=`ccm start -m -q -nogui -r ccm_admin -d $DBAREA/billing`;export CCM_ADDR
+
+			echo $CCM_ADDR
+
+			ccm set role build_mgr
+
+			mainloop
+
+			ccm stop
+			retcode=0
+		fi
+		;;
+        OFF)
+		#
+		# Fermata automa 
+		#
+		echo 
+                echo ------------------------------------------------------------------------------------
+		echo SELESTA G.C.A. Professional Services
+		echo ====================================
+		echo Sessione automatica Continuus
+		echo Management del ciclo di vita
+                echo ------------------------------------------------------------------------------------
+		echo 
+		if [ -f $DBAREA/billing/lib/notify/Unix/automa_off ]
+		then
+			echo La Sessione automatica di management risulta DISATTIVA
+			echo 
+		else
+			echo Stop della Sessione automatica di management in corso...
+			echo AUTOMA STOPPED>./automa_off
+			rm ./automa_on
+			echo Sessione automatica di management DISATTIVA
+			echo 
+		fi
+		retcode=0	
+                ;;
+        STAT)
+		#
+		# Stato automa 
+		#
+		echo 
+                echo ------------------------------------------------------------------------------------
+		echo SELESTA G.C.A. Professional Services
+		echo ====================================
+		echo Sessione automatica Continuus
+		echo Management del ciclo di vita
+                echo ------------------------------------------------------------------------------------
+		echo 
+		if [ -f $DBAREA/billing/lib/notify/Unix/automa_off ]
+		then
+			echo "La Sessione automatica di management e' DISATTIVA"
+		else
+			echo "La Sessione automatica di management e' ATTIVA"
+		fi
+		echo 
+		retcode=0	
+                ;;
+        *)
+		echo 
+                echo ------------------------------------------------------------------------------------
+		echo SELESTA G.C.A. Professional Services
+		echo ====================================
+		echo Sessione automatica Continuus
+		echo Management del ciclo di vita
+                echo ------------------------------------------------------------------------------------
+		echo 
+                echo Parametro sconosciuto
+		echo 
+                echo UTILIZZO:
+                echo --------
+                echo            "MYAUTOMA [ ON | OFF | STAT ]"
+		echo 
+		retcode=1
+                ;;
+esac
+
+exit $retcode
+
+
+exit 0

@@ -1,0 +1,1614 @@
+#!/bin/ksh
+##############################################################################
+#
+#	Delivery procedure for non-HPS software
+#
+# Parametri passati: $1 /usr/CONT_SRV/SWD_FIL/AMBIENTE (CSU o SQA o PRD)
+##############################################################################
+
+##############################################################################
+#	Assign input parameters
+##############################################################################
+
+DIRIN=$1
+INIFILE=/usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/Unix/ccmcpkzip_script.ini
+EXEDIR=/usr/CONT_SRV/ccmdb/DB_FIL/lib/notify/Unix/
+RUN_AMBIENTE=`echo $DIRIN | awk -F/ '{ n=split($0,A);print A[n] }'`
+
+##############################################################################
+#	check ini file exists and readable
+##############################################################################
+
+if [ ! -r "$INIFILE" ] 
+then
+  echo Error 10: cannot read file $INIFILE
+  echo Error 10: cannot read file $INIFILE > $DIRIN"/response.txt"
+  exit 10
+fi
+
+##############################################################################
+#	Read ini file
+##############################################################################
+
+AMBIENTI=
+AMBIENTI_SUBST_COLLID=
+CLIENT_DELIMITERS=
+SERVER_DELIMITERS=
+EXEMPT_DELIMITERS=
+BIND_DELIMITERS=
+BIND_SUBDIR=
+SWDIR_PREFIX_OS2=
+SWDIR_PREFIX_AIX=
+CONSEGNA_FILE_PREFIX=
+FILE_SERVER=
+OUTDIR_PREFIX_OS2=
+WORK_DIR=
+RESPONSE_FILE=
+MISSING_BND=
+COLLECTION_LST=
+MKZPFILE_TMP=
+SEPARATE_PROJECTS=
+
+cat $INIFILE |&
+while true; do
+  read -p LINE
+  if [ -z "$LINE" ] ; then
+    break; 
+  fi
+  VAR=`echo $LINE | awk -F= '{split($0,A); print A[1]}'`  
+  VAL=`echo $LINE | awk -F= '{split($0,A); print A[2]}'`  
+  case "$VAR" in
+    "AMBIENTI" ) AMBIENTI=$VAL;;
+    "AMBIENTI_SUBST_COLLID" ) AMBIENTI_SUBST_COLLID=$VAL;;
+    "CLIENT_DELIMITERS" ) CLIENT_DELIMITERS=$VAL;;
+    "SERVER_DELIMITERS" ) SERVER_DELIMITERS=$VAL;;
+    "EXEMPT_DELIMITERS" ) EXEMPT_DELIMITERS=$VAL;;
+    "BIND_DELIMITERS" ) BIND_DELIMITERS=$VAL;;
+    "BIND_SUBDIR" ) BIND_SUBDIR=$VAL;;
+    "SWDIR_PREFIX_OS2" ) SWDIR_PREFIX_OS2=$VAL;;
+    "SWDIR_PREFIX_AIX" ) SWDIR_PREFIX_AIX=$VAL;;
+    "CONSEGNA_FILE_PREFIX" ) CONSEGNA_FILE_PREFIX=$VAL;;
+    "FILE_SERVER" ) FILE_SERVER=$VAL;;
+    "OUTDIR_PREFIX_OS2" ) OUTDIR_PREFIX_OS2=$VAL;;
+    "WORK_DIR" ) WORK_DIR=$VAL;;
+    "RESPONSE_FILE" ) RESPONSE_FILE=$VAL;;
+    "MISSING_BND" ) MISSING_BND=$VAL;;
+    "COLLECTION_LST" ) COLLECTION_LST=$VAL;;
+    "MKZPFILE_TMP" ) MKZPFILE_TMP=$VAL;;
+    "SEPARATE_PROJECTS" ) SEPARATE_PROJECTS=$VAL;;
+  * ) echo Error 11: unrecognised ini variable $VAR = $VAL;;
+  esac
+done
+
+echo Info:  INI file variables:
+echo Info:  read AMBIENTI = $AMBIENTI
+echo Info:  read AMBIENTI_SUBST_COLLID = $AMBIENTI_SUBST_COLLID
+echo Info:  read CLIENT_DELIMITERS = $CLIENT_DELIMITERS
+echo Info:  read SERVER_DELIMITERS = $SERVER_DELIMITERS
+echo Info:  read EXEMPT_DELIMITERS = $EXEMPT_DELIMITERS
+echo Info:  read BIND_DELIMITERS = $BIND_DELIMITERS
+echo Info:  read BIND_SUBDIR = $BIND_SUBDIR
+echo Info:  read SWDIR_PREFIX_OS2 = $SWDIR_PREFIX_OS2
+echo Info:  read SWDIR_PREFIX_AIX = $SWDIR_PREFIX_AIX
+echo Info:  read CONSEGNA_FILE_PREFIX = $CONSEGNA_FILE_PREFIX
+echo Info:  read FILE_SERVER = $FILE_SERVER
+echo Info:  read OUTDIR_PREFIX_OS2 = $OUTDIR_PREFIX_OS2
+echo Info:  read WORK_DIR = $WORK_DIR
+echo Info:  read RESPONSE_FILE = $RESPONSE_FILE
+echo Info:  read MISSING_BND = $MISSING_BND
+echo Info:  read COLLECTION_LST = $COLLECTION_LST
+echo Info:  read MKZPFILE_TMP = $MKZPFILE_TMP
+echo Info:  read SEPARATE_PROJECTS = $SEPARATE_PROJECTS
+
+##############################################################################
+#	check ini variables are present
+##############################################################################
+
+if [ -z "$RESPONSE_FILE" ]
+then
+  echo Error 12: variable RESPONSE_FILE not found in ini file 
+  echo Error 12: variable RESPONSE_FILE not found in ini file > $DIRIN"/response.txt"
+  exit 12
+fi
+
+# 	Form full path name for response file
+
+RESPONSE_FILE=${DIRIN}"/"${RESPONSE_FILE}
+echo "Error: no files produced as output" > $RESPONSE_FILE
+NEW_RESPONSE_FILE=${RESPONSE_FILE}".new"
+rm -f $NEW_RESPONSE_FILE >> $RESPONSE_FILE 2>&1
+
+if [ -z "$AMBIENTI" ]
+then
+  echo Error 12: variable AMBIENTI not found in ini file
+  echo Error 12: variable AMBIENTI not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$AMBIENTI_SUBST_COLLID" ]
+then
+  echo Error 12: variable AMBIENTI_SUBST_COLLID not found in ini file
+  echo Error 12: variable AMBIENTI_SUBST_COLLID not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$COLLECTION_LST" ]
+then
+  echo Error 12: variable COLLECTION_LST not found in ini file 
+  echo Error 12: variable COLLECTION_LST not found in ini file  >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$MISSING_BND" ]
+then
+  echo Error 12: variable MISSING_BND not found in ini file 
+  echo Error 12: variable MISSING_BND not found in ini file  >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$MKZPFILE_TMP" ]
+then
+  echo Error 12: variable MKZPFILE_TMP not found in ini file 
+  echo Error 12: variable MKZPFILE_TMP not found in ini file  >> $RESPONSE_FILE
+  exit 12
+fi
+
+
+if [ -z "$CLIENT_DELIMITERS" ]
+then
+  echo Error 12: variable CLIENT_DELIMITERS not found in ini file
+  echo Error 12: variable CLIENT_DELIMITERS not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$SERVER_DELIMITERS" ]
+then
+  echo Error 12: variable SERVER_DELIMITERS not found in ini file 
+  echo Error 12: variable SERVER_DELIMITERS not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$EXEMPT_DELIMITERS" ]
+then
+  echo Error 12: variable EXEMPT_DELIMITERS not found in ini file
+  echo Error 12: variable EXEMPT_DELIMITERS not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$BIND_DELIMITERS" ]
+then
+  echo Error 12: variable BIND_DELIMITERS not found in ini file
+  echo Error 12: variable BIND_DELIMITERS not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$BIND_SUBDIR" ]
+then
+  echo Error 12: variable BIND_SUBDIR not found in ini file
+  echo Error 12: variable BIND_SUBDIR not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$SWDIR_PREFIX_OS2" ]
+then
+  echo Error 12: variable SWDIR_PREFIX_OS2 not found in ini file
+  echo Error 12: variable SWDIR_PREFIX_OS2 not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$SWDIR_PREFIX_AIX" ]
+then
+  echo Error 12: variable SWDIR_PREFIX_AIX not found in ini file
+  echo Error 12: variable SWDIR_PREFIX_AIX not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$CONSEGNA_FILE_PREFIX" ]
+then
+  echo Error 12: variable CONSEGNA_FILE_PREFIX not found in ini file
+  echo Error 12: variable CONSEGNA_FILE_PREFIX not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$FILE_SERVER" ]
+then
+  echo Error 12: variable FILE_SERVER not found in ini file
+  echo Error 12: variable FILE_SERVER not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$OUTDIR_PREFIX_OS2" ]
+then
+  echo Error 12: variable OUTDIR_PREFIX_OS2 not found in ini file
+  echo Error 12: variable OUTDIR_PREFIX_OS2 not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+if [ -z "$WORK_DIR" ]
+then
+  echo Error 12: variable WORK_DIR not found in ini file
+  echo Error 12: variable WORK_DIR not found in ini file >> $RESPONSE_FILE
+  exit 12
+fi
+
+##############################################################################
+#	check input directory exists and readable
+##############################################################################
+
+if [ ! -r "$DIRIN" ] 
+then
+  echo Error 13: cannot access $DIRIN - check exists and has read permission
+  echo Error 13: cannot access $DIRIN - check exists and has read permission >> $RESPONSE_FILE
+  exit 13
+fi
+
+##############################################################################
+#	check input directory is a directory
+##############################################################################
+
+if [ ! -d "$DIRIN" ] 
+then
+  echo Error 14: $DIRIN is not a directory
+  echo Error 14: $DIRIN is not a directory >> $RESPONSE_FILE
+  exit 14
+fi
+
+##############################################################################
+#	check environment is within admissible values
+#	read from the ini file
+##############################################################################
+
+if [ -z "`echo \"$AMBIENTI\" | grep \"$RUN_AMBIENTE\"`" ]
+then
+  echo Error 15: environment $RUN_AMBIENTE not found in variable AMBIENTI in ini file
+  echo Error 15: environment $RUN_AMBIENTE not found in variable AMBIENTI in ini file >> $RESPONSE_FILE
+  exit 15
+fi 
+
+##############################################################################
+#	check environments for substitution of collection id is within 
+#	admissible values read from the ini file
+##############################################################################
+
+if [ -z "`echo \"$AMBIENTI\" | grep \"$AMBIENTI_SUBST_COLLID\"`" ]
+then
+  echo Error 16: environment $AMBIENTI_SUBST_COLLID not found in variable AMBIENTI in ini file
+  echo Error 16: environment $AMBIENTI_SUBST_COLLID not found in variable AMBIENTI in ini file >> $RESPONSE_FILE
+  exit 16
+fi 
+
+##############################################################################
+#
+#	check consegna file exists and readable
+#
+#############################################################################
+
+CONSEGNA_FILE=${CONSEGNA_FILE_PREFIX}.${RUN_AMBIENTE}
+if [ ! -r "$CONSEGNA_FILE" ] 
+then
+  echo Error 17: cannot read file $CONSEGNA_FILE
+  echo Error 17: cannot read file $CONSEGNA_FILE >> $RESPONSE_FILE
+  exit 17
+fi
+
+##############################################################################
+# 	Obtain identificatore della consegna
+##############################################################################
+
+CONSEGNA_FILE_BACKUP=${CONSEGNA_FILE}.backup
+mv $CONSEGNA_FILE $CONSEGNA_FILE_BACKUP >> $RESPONSE_FILE 2>&1
+if [ $? -ne 0 ]
+then
+  echo Error 18: could not rename the consegna file $CONSEGNA_FILE to $CONSEGNA_FILE_BACKUP
+  echo        another process may be using it or may have exited without restoring the file
+  echo Error 18: could not rename the consegna file $CONSEGNA_FILE to $CONSEGNA_FILE_BACKUP >> $RESPONSE_FILE
+  echo        another process may be using it or may have exited without restoring the file >> $RESPONSE_FILE
+  exit 18
+fi
+CONSEGNA_NUM=`cat $CONSEGNA_FILE_BACKUP`
+CONSEGNA_NUM3=`echo $CONSEGNA_NUM | awk '{printf "%.3d", $1}'`
+if [ "$RUN_AMBIENTE" = "CSU" ]
+then
+#remsh $FILE_SERVER sveglia.cmd $RUN_AMBIENTE
+  CONSEGNA_AMBIENTE="INT"
+  ZIP_AMBIENTE_CHAR="I" 
+else
+  if [ "$RUN_AMBIENTE" = "SQA" ]
+  then
+    CONSEGNA_AMBIENTE="COL"
+    ZIP_AMBIENTE_CHAR="C"
+  else
+    if [ "$RUN_AMBIENTE" = "PRD" ]
+    then
+      CONSEGNA_AMBIENTE="PRD"
+      ZIP_AMBIENTE_CHAR="P"
+    else
+      echo Error 48:"$RUN_AMBIENTE has no mapping for bind list file name and environment character in zip files"
+      echo Error 48:"$RUN_AMBIENTE has no mapping for bind list file name and environment character in zip files" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE 2>&1
+      exit 48
+    fi
+  fi
+fi 
+
+CONSEGNA=${CONSEGNA_AMBIENTE}${CONSEGNA_NUM}
+
+
+##############################################################################   
+#     Imposta,come prima riga di response.txt.new,il n. di consegna e ambiente   
+#     - Romanini -   
+##############################################################################   
+echo "Rilascio: ${CONSEGNA}" >> ${NEW_RESPONSE_FILE}                             
+
+
+
+##############################################################################
+#	check that working directory is writable
+##############################################################################
+
+if [ ! -d "$WORK_DIR" ] 
+then
+  echo Error 19: $WORK_DIR is not a directory
+  echo Error 19: $WORK_DIR is not a directory >> $RESPONSE_FILE
+  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE 2>&1
+  exit 19
+fi
+
+if [ ! -w "$WORK_DIR" ] 
+then
+  echo Error 20: $WORK_DIR is not writable 
+  echo Error 20: $WORK_DIR is not writable  >> $RESPONSE_FILE
+  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+  exit 20 
+fi
+
+##############################################################################
+# Prova per "rinfrescare" la remsh di OS2
+##############################################################################
+TARGET_REMSH="$SWDIR_PREFIX_OS2/$RUN_AMBIENTE"
+TARGET_REMSH=`echo $TARGET_REMSH | awk '{gsub("\/","\\\\"); print $0}'`
+#remsh $FILE_SERVER "sveglia.cmd $RUN_AMBIENTE"
+##############################################################################
+#      	create target directory for the consegna 
+##############################################################################
+
+OUTDIR_OS2="${OUTDIR_PREFIX_OS2}/${CONSEGNA}"
+OUTDIR_OS2=`echo $OUTDIR_OS2 | awk '{gsub("\/","\\\\"); print $0}'`
+remsh $FILE_SERVER "md $OUTDIR_OS2" >> $RESPONSE_FILE 2>&1
+if [ $? -ne 0 ]
+then
+  echo Error 21: could not create directory $OUTDIR_OS2 on $FILE_SERVER 
+  echo Error 21: could not create directory $OUTDIR_OS2 on $FILE_SERVER >> $RESPONSE_FILE
+  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+  exit 21
+fi
+
+##############################################################################    
+#       Nel caso ci siano files in scrittura privati (files "wsod"),              
+#       crea la directory WSOD sotto OUTDIR_OS2 (D:\SWD_FIL\$CONSEGNA)            
+#       e copia i files "wsod" da UNIX a OS2 - Romanini                           
+##############################################################################    
+                                                                                  
+DIRIN_WSOD=${DIRIN}"_"WSOD                                                        
+                                                                                  
+if [[ -d ${DIRIN_WSOD} && -r ${DIRIN_WSOD} ]]                                     
+then                                                                              
+                                                                                  
+  OUTDIR_OS2_WSOD="${OUTDIR_OS2}/WSOD"                                            
+  OUTDIR_OS2_WSOD=`echo $OUTDIR_OS2_WSOD | awk '{gsub("\/","\\\\"); print $0}'`   
+  remsh $FILE_SERVER "md $OUTDIR_OS2_WSOD" >> $RESPONSE_FILE 2>&1                 
+
+                                                                                                  
+  if [ $? -ne 0 ]                                                                                 
+  then                                                                                            
+    echo Error 50: could not create directory $OUTDIR_OS2_WSOD on $FILE_SERVER                    
+    echo Error 50: could not create directory $OUTDIR_OS2_WSOD on $FILE_SERVER >> $RESPONSE_FILE  
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1                                
+    exit 50                                                                                       
+  fi                                                                                              
+
+  COPYDIR_SOURCE=`echo ${DIRIN_WSOD} | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'`
+  COPYDIR_TARGET="${OUTDIR_OS2_WSOD}/"                                        
+  COPYDIR_TARGET=`echo $COPYDIR_TARGET | awk '{gsub("\/","\\\\"); print $0}'` 
+  res=`remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"`         
+
+  rc=$?                                                                                           
+                                                                                                
+  if [ $rc -ne 0 ]                                                                                
+  then                                                                                         
+    echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"                         
+    echo Error 51: "The command to copy writable private software (wsod,not to be zipped) gave rc = $rc" 
+    echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET" >> $RESPONSE_FILE       
+    echo Error 51: "The command to copy writable private software (wsod,not to be zipped) gave rc = $rc" >> $RESPONSE_FILE 
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 51                                                       
+  fi                                                                 
+
+  res=`remsh $FILE_SERVER "dir /s $COPYDIR_SOURCE" | awk '{ if (substr($2,1,4)=="file") { total=$1 }} END {
+print total}'`  
+  res2=`remsh $FILE_SERVER "dir /s $COPYDIR_TARGET" | awk '{if (substr($2,1,4)=="file") { total=$1 }} END {
+print total}'`      
+
+  if [ -z "$res2" -o "$res" -ne "$res2" ]                                                      
+  then                                                                                         
+     echo Error 52: "The command to copy writable private software (wsod) not to be zipped gave rc 0 but failed to produce the same number of files in the target directory"                                           
+     echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"                        
+     echo Error 52: "The command to copy writable private software (wsod) not to be zipped gave rc 0 but failed to produce the same number of files in the target directory" >> $RESPONSE_FILE
+     echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET" >> $RESPONSE_FILE 
+     mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1                       
+     exit 52                                                                              
+  fi                                           
+  echo "WSOD" >> $NEW_RESPONSE_FILE   
+fi                                             
+
+
+##############################################################################
+#	form name of output bind list file and make sure it does not exist
+##############################################################################
+
+OUTPUT_BNDLST_AIX=${DIRIN}"/"${CONSEGNA}".LST"
+OUTPUT_BNDLST_OS2_TARGET=${OUTDIR_PREFIX_OS2}"/"${CONSEGNA}"/"
+OUTPUT_BNDLST_OS2_TARGET=`echo $OUTPUT_BNDLST_OS2_TARGET | awk '{gsub("\/","\\\\"); print $0}'`
+OUTPUT_BNDLST_OS2_SOURCE=`echo "${DIRIN}/${CONSEGNA}.LST" | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+rm -f $OUTPUT_BNDLST_AIX >> $RESPONSE_FILE 2>&1
+
+##############################################################################
+#	check that global LST file is readable	
+##############################################################################
+
+LSTFILE=$DIRIN"/"${RUN_AMBIENTE}"_BND.LST"
+if [ ! -r "$LSTFILE" ]
+then
+  echo Error 22: cannot read list of binds files $LSTFILE
+  echo Error 22: cannot read list of binds files $LSTFILE >> $RESPONSE_FILE
+  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE > $RESPONSE_FILE 2>&1
+  exit 22
+fi
+
+##############################################################################
+#	check if environment requires update of collection id in executables
+##############################################################################
+
+if [ ! -z "`echo \"$AMBIENTI_SUBST_COLLID\" | grep \"$RUN_AMBIENTE\"`" ]
+then
+  echo Info:  update of collection id needed
+#    chmod -R o+w $DIRIN >> $RESPONSE_FILE
+
+
+##############################################################################
+#       form names of temporary files used during update of collection
+##############################################################################
+
+  EXEFILELIST=$WORK_DIR"/exelist.${RUN_AMBIENTE}"
+  OUTFILELIST=$WORK_DIR"/outlist.${RUN_AMBIENTE}"
+  DBRMLIST=$WORK_DIR"/dbrmlist.${RUN_AMBIENTE}"
+  DBRMDATES=$WORK_DIR"/dbrmdates.${RUN_AMBIENTE}"
+  BND_LST=$WORK_DIR"/bndlist.${RUN_AMBIENTE}"
+  BNDPRESENT="N"
+
+##############################################################################
+#	obtain name of exe and dll files
+##############################################################################
+
+  find $DIRIN \( -name *.exe -o -name *.EXE -o -name *.dll -o -name *.DLL \) -print > $EXEFILELIST
+  find $DIRIN \( -name *.bnd -o -name *.BND \) -exec $EXEDIR"filedate" {} \;  > $DBRMDATES 
+  find $DIRIN \( -name *.bnd -o -name *.BND \)|awk -F"instdb/bind/" '{ print $2 }' |awk -F. '{ print toupper($1) }' > $BND_LST
+
+
+
+##############################################################################
+# 	Obtain collection id to use
+##############################################################################
+
+  COLLID=$CONSEGNA
+  echo Info:  using collection id $COLLID
+
+##############################################################################
+# 	call program to update exe and dll for new collection id
+##############################################################################
+
+  $EXEDIR"/updcoll" "$COLLID" "$EXEFILELIST" "$OUTFILELIST" "$BND_LST" "$COLLECTION_LST" >> $RESPONSE_FILE
+
+  if [ $? -ne 0 ]
+  then
+    echo updcollid "$COLLID" "$EXEFILELIST" "$OUTFILELIST" "$BND_LST" "$COLLECTION_LST"
+    echo updcollid "$COLLID" "$EXEFILELIST" "$OUTFILELIST" "$BND_LST" "$COLLECTION_LST" >> $RESPONSE_FILE
+    echo Error 24: The substitution of collection id finished with errors
+    echo Error 24: The substitution of collection id finished with errors >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 24
+  fi
+
+
+##############################################################################
+# 	create bnd list
+##############################################################################
+
+  cat $OUTFILELIST | awk '/DBRM/ { print $2 }' | sort | uniq > $DBRMLIST
+  res=`cat $DBRMLIST`
+  bnd_check_error='N'
+  for dbrm in $res
+  do
+    BNDPRESENT="Y"
+    dbases=`grep -i "^${dbrm}.BND" $LSTFILE | awk '{sub(/.*DbName\]/,"");sub(/\[DbParm.*/,""); output=$0}
+		END {print output}'`
+    bindparms=`grep -i "^${dbrm}.BND" $LSTFILE | awk '{sub(/.*DbParm\]/,""); sub(/\r/,""); output=$0}
+		END {print output}'`
+    if [ -z "$dbases" -a -r $MISSING_BND ]
+    then
+      dbases=`grep -i "^${dbrm}.BND" $MISSING_BND | awk '{sub(/.*DbName\]/,"");sub(/\[DbParm.*/,""); output=$0}
+		END {print output}'`
+      bindparms=`grep -i "^${dbrm}.BND" $MISSING_BND | awk '{sub(/.*DbParm\]/,""); sub(/\r/,"");output=$0}
+		END {print output}'`
+    else
+      if [ -z "$bindparms" -a -r $MISSING_BND ]
+      then
+        bindparms=`grep -i "^${dbrm}.BND" $MISSING_BND | awk '{sub(/.*DbParm\]/,""); sub(/\r/,"");output=$0}
+		END {print output}'`
+      fi    
+    fi
+    if [ -z "$dbases" ]
+    then
+      echo "Error 42: The database information for $dbrm was not found in file $LSTFILE or $MISSING_BND"
+      echo "Error 42: The database information for $dbrm was not found in file $LSTFILE or $MISSING_BND" >> $RESPONSE_FILE
+      modulo_chiamante=`cat $OUTFILELIST | grep $dbrm`
+      echo "(Rif. modulo chiamante) " $modulo_chiamante 
+      echo "(Rif. modulo chiamante) " $modulo_chiamante >> $RESPONSE_FILE 
+      bnd_check_error='Y'
+    fi        
+    if [ -z "$bindparms" ]
+    then
+      echo "Error 43: The bind parameters were not found for $dbrm in file $LSTFILE or $MISSING_BND"
+      echo "Error 43: The bind parameters were not found for $dbrm in file $LSTFILE or $MISSING_BND" >> $RESPONSE_FILE
+      modulo_chiamante=`cat $OUTFILELIST | grep $dbrm`
+      echo "(Rif. modulo chiamante) " $modulo_chiamante 
+      echo "(Rif. modulo chiamante) " $modulo_chiamante >> $RESPONSE_FILE 
+      bnd_check_error='Y'
+    fi        
+#    for db in $dbases
+#    do
+#      echo $db $dbrm "COLLECTION" $COLLID $bindparms "\r" >> $OUTPUT_BNDLST_AIX 
+#    done
+    binddate=`grep -i "${dbrm}.BND" $DBRMDATES | awk '{sub(/.*Date /,"");output=$0}
+                 END {print output}'`
+    for db in $dbases
+    do
+      echo $db $binddate $dbrm "COLLECTION" $COLLID $bindparms "\r" >> $OUTPUT_BNDLST_AIX 
+    done
+  done
+  if [ "$bnd_check_error" = "Y" ]
+  then
+    echo "Ending because of errors in retrieving bind information (see errors 42 or 43 above)"
+    echo "Ending because of errors in retrieving bind information (see errors 42 or 43 above)" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 44
+  fi
+
+##############################################################################
+# 	remove temporary files
+##############################################################################
+
+  rm $EXEFILELIST >> $RESPONSE_FILE 2>&1
+  rm $OUTFILELIST >> $RESPONSE_FILE 2>&1
+  rm $DBRMLIST >> $RESPONSE_FILE 2>&1
+
+##############################################################################
+#	if environment does not need collection id updating form lst file
+#	from .BND files present in directory structure
+##############################################################################
+
+else
+  DBRMLIST=$WORK_DIR"/dbrmlist.${RUN_AMBIENTE}"
+  DBRMDATES=$WORK_DIR"/dbrmdates.${RUN_AMBIENTE}"
+
+  find $DIRIN \( -name *.bnd -o -name *.BND \) -print > $DBRMLIST 
+  find $DIRIN \( -name *.bnd -o -name *.BND \) -exec $EXEDIR"filedate" {} \;  > $DBRMDATES 
+  BNDFILES=`cat $DBRMLIST | awk -F/ '{ n=split($0,A);print substr (A[n],1,length(A[n])-4)}'`
+  bnd_check_error='N'
+  for dbrm in $BNDFILES
+  do
+    BNDPRESENT="Y"
+    dbases=`grep -i "^${dbrm}.BND" $LSTFILE | awk '{sub(/.*DbName\]/,"");sub(/\[DbParm.*/,""); output=$0}
+			END {print output}'`
+    bindparms=`grep -i "^${dbrm}.BND" $LSTFILE | awk '{sub(/.*DbParm\]/,""); sub(/\r/,""); output=$0}
+			END {print output}'`
+    if [ -z "$dbases" -a -r $MISSING_BND ]
+    then
+      dbases=`grep -i "^${dbrm}.BND" $MISSING_BND | awk '{sub(/.*DbName\]/,"");sub(/\[DbParm.*/,""); output=$0}
+			END {print output}'`
+      bindparms=`grep -i "^${dbrm}.BND" $MISSING_BND | awk '{sub(/.*DbParm\]/,""); sub(/\r/,"");output=$0}
+			END {print output}'`
+    else
+      if [ -z "$bindparms" -a -r $MISSING_BND ]
+      then
+        bindparms=`grep -i "^${dbrm}.BND" $MISSING_BND | awk '{sub(/.*DbParm\]/,""); sub(/\r/,""); output=$0}
+			END {print output}'`
+      fi    
+    fi
+    if [ -z "$dbases" ]
+    then
+      echo "Error 45: The database information for $dbrm was not found in file$LSTFILE"
+      echo "Error 45: The database information for $dbrm was not found in file $LSTFILE" >> $RESPONSE_FILE
+      bnd_check_error='Y'
+    fi        
+    if [ -z "$bindparms" ]
+    then
+      echo "Error 46: The bind parameters were not found for $dbrm in file $LSTFILE"
+      echo "Error 46: The bind parameters were not found for $dbrm in file $LSTFILE" >> $RESPONSE_FILE
+      bnd_check_error='Y'
+    fi        
+    binddate=`grep -i "${dbrm}.BND" $DBRMDATES | awk '{sub(/.*Date /,"");output=$0}
+			END {print output}'`
+    for db in $dbases
+    do
+      echo $db $binddate $dbrm $bindparms "\r" >> $OUTPUT_BNDLST_AIX 
+    done
+  done
+  if [ "$bnd_check_error" = "Y" ]
+  then
+    echo "Ending because of errors in retrieving bind information (see errors 45 or 46 above)"
+    echo "Ending because of errors in retrieving bind information (see errors 45 or 46 above)" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 47
+  fi
+
+  rm $DBRMLIST >> $RESPONSE_FILE 2>&1
+fi
+
+##############################################################################
+#	check if client and/or server directories are present and which
+#	server drives are present
+##############################################################################
+
+ERROR_COND=0
+CLIENT_DIR=
+SERVER_DIR=
+BND_DIR=
+NUM_DR=0
+NUM_BDR=0
+SW_FOUND=NO
+SW_SEP=NO
+SEP_PROJ_DIR=
+DIRLIST=`ls $DIRIN`
+for DIR in $DIRLIST
+do 
+  if [ -d "${DIRIN}/${DIR}" ]
+  then
+    check_server=`echo $SERVER_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD); 
+                  for (x in SD) 
+		  {
+ 		    if (SD[x]==search)
+		    {
+		      print "found"
+		    }
+		  }}'`
+    if [ ! -z "$check_server" ]
+    then
+      SERVER_DIR=$DIRIN"/"$DIR	
+      SDRIVES=`ls $SERVER_DIR`
+      i=0
+      for DRIVE in $SDRIVES
+      do
+        len=`echo $DRIVE | awk '{print length($0)}'`
+        if [ ${len} -ne 1 ]
+        then
+  	  echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $SERVER_DIR)"
+	  echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $SERVER_DIR)" >> $RESPONSE_FILE
+	  ERROR_COND=8
+ 	else
+	  i=`expr $i + 1`
+	  DR[$i]=$DRIVE
+	  SW_FOUND=YES
+	fi
+      done
+      NUM_DR=$i
+    else
+      check_client=`echo $CLIENT_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD); 
+                   for (x in SD) 
+  		   {
+ 		     if (SD[x]==search)
+		     {
+		        print "found"
+		     }
+		   }}'`
+      if [ ! -z "$check_client" ]
+      then
+        SW_FOUND=YES
+        CLIENT_DIR=$DIRIN"/"$DIR
+      else
+ 	check_bind=`echo $BIND_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD);
+                   for (x in SD)
+                   {
+                     if (SD[x]==search)
+                     {
+                       print "found"
+                     }
+                   }}'`
+        if [ ! -z "$check_bind" ]
+	then
+	  BND_DIR=$DIRIN"/"$DIR"/"$BIND_SUBDIR
+	  BDRIVES=`ls $BND_DIR`
+	  i=0
+	  for DRIVE in $BDRIVES
+	  do
+	    len=`echo $DRIVE | awk '{print length($0)}'`
+	    if [ ${len} -ne 1 ]
+	    then
+	      echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $BND_DIR)"
+	      echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $BND_DIR)" >> $RESPONSE_FILE
+	      ERROR_COND=8
+ 	    else
+	      i=`expr $i + 1`
+	      BDR[$i]=$DRIVE
+	      SW_FOUND=YES
+	    fi
+	  done
+	  NUM_BDR=$i
+	else
+	  check_separate=`echo $SEPARATE_PROJECTS | awk -F, -v search=$DIR '{split($0,SD);
+                         for (x in SD)
+                         {
+                           if (SD[x]==search)
+                           {
+                             print "found"
+                           }
+                         }}'`
+          if [ !  -z "$check_separate" ]
+          then
+	    SW_SEP=YES	
+	    SW_FOUND=YES
+            SEP_PROJ_DIR=$SEP_PROJ_DIR" "$DIR 
+	  else
+	    check_exempt=`echo $EXEMPT_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD);
+                         for (x in SD)
+                         {
+                           if (SD[x]==search)
+                           {
+                             print "found"
+                           }
+                         }}'`
+	    if [ -z "$check_exempt" ]
+	    then	
+	      echo Warning: Directory or file name does not conform to server or client standard and will not be handled: $DIR
+	      echo Warning: Directory or file name does not conform to server or client standard and will not be handled: $DIR >> $NEW_RESPONSE_FILE
+	      echo Warning: Directory or file name does not conform to server or client standard and will not be handled: $DIR >> $RESPONSE_FILE
+	      ERROR_COND=4
+	    else
+##################################################################
+# 	copy across the directories that are not to be zipped 
+##################################################################
+              SW_FOUND=YES
+	      COPYDIR_SOURCE=`echo $DIRIN"/"$DIR | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+	      COPYDIR_TARGET="${OUTDIR_PREFIX_OS2}/${CONSEGNA}/$DIR/"
+	      COPYDIR_TARGET=`echo $COPYDIR_TARGET | awk '{gsub("\/","\\\\"); print $0}'`
+	      res=`remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"`
+	      rc=$?
+	      if [ $rc -ne 0 ]
+	      then
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"
+	        echo Error 26: "The command to copy software not to be zipped gave rc = $rc"
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET" >> $RESPONSE_FILE
+	        echo Error 26: "The command to copy software not to be zipped gave rc = $rc" >> $RESPONSE_FILE
+	        mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+	        exit 26
+    	      fi
+
+#############################
+# check that copy has worked
+#############################
+
+	      res=`remsh $FILE_SERVER "dir /s $COPYDIR_SOURCE" | awk '{ if (substr($2,1,4)=="file") { total=$1 }} END {print total}'`
+	      res2=`remsh $FILE_SERVER "dir /s $COPYDIR_TARGET" | awk '{if (substr($2,1,4)=="file") { total=$1 }} END {print total}'`
+	      if [ -z "$res2" -o "$res" -ne "$res2" ]
+	      then
+	        echo Error 27: the command to copy software not to be zipped gave rc 0 but failed to produce the same number of files in the target directory
+	  	echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"
+		echo Error 27: the command to copy software not to be zipped gave rc 0 but failed to produce the same number of files in the target directory >> $RESPONSE_FILE
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET" >> $RESPONSE_FILE
+	      	mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+		exit 27
+	      fi
+	      echo $DIR >> $NEW_RESPONSE_FILE
+
+ 	    fi
+	  fi
+	fi
+      fi
+    fi
+  else
+
+##############################
+#       copy files (not .LST)
+##############################
+
+    res=`echo $DIR | awk '{b=tolower(substr($0,length($0)-2,3)); 
+		if (b=="lst" || b=="txt" || b=="new" || b=="wsd" || b=="doc")
+		{ print "found" }}'`
+
+    if [ -z "$res" ]
+    then
+      COPY_SOURCE=`echo $DIRIN"/"$DIR | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+      COPY_TARGET="${OUTDIR_PREFIX_OS2}/${CONSEGNA}/"
+      COPY_TARGET=`echo $COPY_TARGET | awk '{gsub("\/","\\\\"); print $0}'`
+      res=`remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"`
+      rc=$?
+      if [ $rc -ne 0 ]
+      then
+        echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"
+        echo Error 28: "The command to copy software not to be zipped gave rc = $rc"
+        echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET" >> $RESPONSE_FILE
+        echo Error 28: "The command to copy software not to be zipped gave rc = $rc" >> $RESPONSE_FILE
+        mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+        exit 28
+      fi
+
+#############################
+# check that copy has worked
+#############################
+
+      res=`remsh $FILE_SERVER "dir ${COPY_TARGET}${DIR}" | awk '{if (substr($2,1,4)=="file") { total=$1 }} END {print total}'`
+      if [ "$res" -ne "1" ]
+      then
+        echo Error 29: the command to copy software not to be zipped gave rc 0 but failed to copy the file 
+        echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"
+        echo Error 29: the command to copy software not to be zipped gave rc 0 but failed to copy the file >> $RESPONSE_FILE
+        echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET" >> $RESPONSE_FILE
+        mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+        exit 29
+      fi
+      echo $DIR >> $NEW_RESPONSE_FILE
+
+    fi
+
+#  Inserito da C.M. per il caso in cui ci sia solo un mod*.srv o un mod*.cli o un file
+#  direttamente sotto la consegna (non un *.txt, *.doc ecc.) , non da zippare, 
+#  e nessuna directory per client,server,db2 ecc.
+#  15/02/2000 - C.M. - 
+
+    SW_FOUND=YES
+
+  fi
+done
+
+if [ $ERROR_COND -ge 8 ]
+then
+  echo Error 30: exiting because of errors in the directory structure - see above messages
+  echo Error 30: exiting because of errors in the directory structure - see above messages >> $RESPONSE_FILE
+  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+  exit 30
+fi
+if [ "$SW_FOUND" = "NO" ]
+then
+  echo Error 31: could not find server or client software - check structures of directories supplied 
+  echo Error 31: could not find server or client software - check structures of directories supplied >> $RESPONSE_FILE
+  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+  exit 31
+fi
+    
+chmod -R a+w $DIRIN >> $RESPONSE_FILE
+
+##############################################################################
+#	give the commands to zip the software
+##############################################################################
+
+MKTMP=`echo $MKZPFILE_TMP | awk '{gsub("\/","\\\\"); print $0}'`
+
+
+#############
+# Zip client
+#############
+
+if [ ! -z "$CLIENT_DIR" ]
+then
+  ZIPDIR=`echo $CLIENT_DIR | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+  ZIPNAME="C${ZIP_AMBIENTE_CHAR}${CONSEGNA_NUM}C"
+  ZIPFILE="${OUTDIR_PREFIX_OS2}\\${CONSEGNA}\\${ZIPNAME}"
+  ZIPFILE=`echo $ZIPFILE | awk '{gsub("\/","\\\\"); print $0}'`
+  res=`remsh $FILE_SERVER "mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"`
+  rc=$?
+  if [ $rc -ne 0 ]
+  then
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 32: "The command to zip the client software gave rc = $rc"
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE _C $MKTMP" >> $RESPONSE_FILE
+    echo Error 32: "The command to zip the client software gave rc = $rc" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 32
+  fi
+
+#################################################
+# gather results of client zip for response file
+#################################################
+
+  res=`remsh $FILE_SERVER "nfsdir ${OUTDIR_OS2}\\\\${ZIPNAME}.*" | awk 'BEGIN {maxb="000"}
+           {n=split($0,A)
+             for (i in A)
+             {
+               b=substr(A[i],length(A[i])-2,3);
+               c=substr(A[i],length(A[i])-3,1);
+               if (isnumeric(b) == 1 && b > maxb && c==".")
+               {
+                 maxb=b;
+               }
+             }
+           }
+           END {print maxb}
+           function isnumeric (x)
+           {
+             y=x
+             gsub(/[0-9]/,"",y)
+             if(length(y)>0)
+             {
+               return 0
+             }
+             else
+             {
+               return 1
+             }
+           }'`
+  if [ "$res" = "000" ]
+  then
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 33: "The command to zip the client software gave rc = 0 but did not produce any zip files"
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+    echo Error 33: "The command to zip the client software gave rc = 0 but did not produce any zip files" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 33
+  fi
+  if [ "$res" = "001" ]
+  then
+   res=`echo ${ZIPNAME}'.001' >> $NEW_RESPONSE_FILE`
+  else
+    res=`echo ${ZIPNAME}'.001 - ' ${res} >> $NEW_RESPONSE_FILE`
+  fi 
+
+fi
+
+#############
+# zip server
+#############
+
+i=1
+while [ ${i} -le ${NUM_DR} ]
+do 
+  ZIPDIR=`echo "${SERVER_DIR}/${DR[$i]}" | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+  ZIPNAME="S${ZIP_AMBIENTE_CHAR}${CONSEGNA_NUM}${DR[$i]}"
+  ZIPFILE="${OUTDIR_PREFIX_OS2}\\${CONSEGNA}\\${ZIPNAME}"
+  ZIPFILE=`echo $ZIPFILE | awk '{gsub("\/","\\\\"); print $0}'`
+  res=`remsh $FILE_SERVER "mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"`
+  rc=$?
+  if [ $rc -ne 0 ]
+  then
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 34: "The command to zip the server software gave rc = $rc"
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+    echo Error 34: "The command to zip the server software gave rc = $rc" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 34
+  fi
+
+#################################################
+# gather results of server zip for response file
+#################################################
+
+  res=`remsh $FILE_SERVER "nfsdir ${OUTDIR_OS2}\\\\${ZIPNAME}.*" | awk 'BEGIN {maxb="000"}
+           {n=split($0,A)
+             for (i in A)
+             {
+               b=substr(A[i],length(A[i])-2,3);
+               c=substr(A[i],length(A[i])-3,1);
+               if (isnumeric(b) == 1 && b > maxb && c==".")
+               {
+                 maxb=b;
+               }
+             }
+           }
+           END {print maxb}
+           function isnumeric (x)
+           {
+             y=x
+             gsub(/[0-9]/,"",y)
+             if(length(y)>0)
+             {
+               return 0
+             }
+             else
+             {
+               return 1
+             }
+           }'`
+  if [ "$res" = "000" ]
+  then
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 35: "The command to zip the server software gave rc = 0 but did not produce any zip files"
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+    echo Error 35: "The command to zip the server software gave rc = 0 but did not produce any zip files" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 35
+  fi
+  if [ "$res" = "001" ]
+  then
+    res=`echo ${ZIPNAME}'.001' >> $NEW_RESPONSE_FILE`
+  else
+    res=`echo ${ZIPNAME}'.001 -' ${res} >> $NEW_RESPONSE_FILE`
+  fi 
+  i=`expr $i + 1`
+
+done
+
+###########
+# zip bind
+###########
+
+i=1
+while [ ${i} -le ${NUM_BDR} ]
+do 
+  ZIPDIR=`echo "${BND_DIR}/${BDR[$i]}" | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+  ZIPNAME="S${ZIP_AMBIENTE_CHAR}${CONSEGNA_NUM}${BDR[$i]}"
+  ZIPFILE="${OUTDIR_PREFIX_OS2}\\${CONSEGNA}\\${ZIPNAME}"
+  ZIPFILE=`echo $ZIPFILE | awk '{gsub("\/","\\\\"); print $0}'`
+  res=`remsh $FILE_SERVER "mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"`
+  rc=$?
+  if [ $rc -ne 0 ]
+  then
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 36: "The command to zip the bind software gave rc = $rc"
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 36: "The command to zip the bind software gave rc = $rc" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1 
+    exit 36
+  fi
+
+#################################################
+# gather results of bind zip for response file
+#################################################
+
+  res=`remsh $FILE_SERVER "nfsdir ${OUTDIR_OS2}\\\\${ZIPNAME}.*" | awk 'BEGIN {maxb="000"}
+           {n=split($0,A)
+             for (i in A)
+             {
+               b=substr(A[i],length(A[i])-2,3);
+               c=substr(A[i],length(A[i])-3,1);
+               if (isnumeric(b) == 1 && b > maxb && c==".")
+               {
+                 maxb=b;
+               }
+             }
+           }
+           END {print maxb}
+           function isnumeric (x)
+           {
+             y=x
+             gsub(/[0-9]/,"",y)
+             if(length(y)>0)
+             {
+               return 0
+             }
+             else
+             {
+               return 1
+             }
+           }'`
+  if [ "$res" = "000" ]
+  then
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+    echo Error 37: "The command to zip the bind software gave rc = 0 but did not produce any zip files"
+    echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+    echo Error 37: "The command to zip the bind software gave rc = 0 but did not produce any zip files" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 37
+  fi
+  if [ "$res" = "001" ]
+  then
+    res=`echo ${ZIPNAME}'.001' >> $NEW_RESPONSE_FILE`
+  else
+    res=`echo ${ZIPNAME}'.001 -' ${res} >> $NEW_RESPONSE_FILE`
+  fi 
+  i=`expr $i + 1`
+
+done
+
+##############################################################################
+#	deal with separate projects here - first check what directory types exist
+##############################################################################
+
+for PROJ in $SEP_PROJ_DIR
+do
+  ERROR_COND=0
+  CLIENT_DIR=
+  SERVER_DIR=
+  BND_DIR=
+  NUM_DR=0
+  NUM_BDR=0
+  SW_FOUND=NO
+  DIRLIST=`ls $DIRIN"/"$PROJ`
+  for DIR in $DIRLIST
+  do 
+    if [ -d "${DIRIN}/$PROJ/${DIR}" ]
+    then
+      check_server=`echo $SERVER_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD); 
+                         for (x in SD) 
+ 		         {
+ 			   if (SD[x]==search)
+			   {
+			      print "found"
+			   }
+			 }}'`
+      if [ ! -z "$check_server" ]
+      then
+        SERVER_DIR=$DIRIN"/"$PROJ"/"$DIR	
+        SDRIVES=`ls $SERVER_DIR`
+	i=0
+	for DRIVE in $SDRIVES
+	do
+	  len=`echo $DRIVE | awk '{print length($0)}'`
+	  if [ ${len} -ne 1 ]
+	  then
+	    echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $SERVER_DIR)"
+	    echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $SERVER_DIR)" >> $RESPONSE_FILE
+	    ERROR_COND=8
+ 	  else
+	    i=`expr $i + 1`
+	    DR[$i]=$DRIVE
+	    SW_FOUND=YES
+	  fi
+	done
+	NUM_DR=$i
+      else
+        check_client=`echo $CLIENT_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD); 
+                           for (x in SD) 
+			   {
+ 			     if (SD[x]==search)
+			     {
+			       print "found"
+			     }
+			   }}'`
+        if [ ! -z "$check_client" ]
+	then
+	  SW_FOUND=YES
+	  CLIENT_DIR=$DIRIN"/"$PROJ"/"$DIR
+	else
+ 	  check_bind=`echo $BIND_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD);
+                           for (x in SD)
+                           {
+                             if (SD[x]==search)
+                             {
+                               print "found"
+                             }
+                           }}'`
+          if [ ! -z "$check_bind" ]
+	  then
+	    BND_DIR=$DIRIN"/"$PROJ"/"$DIR"/"$BIND_SUBDIR
+	    BDRIVES=`ls $BND_DIR`
+	    i=0
+	    for DRIVE in $BDRIVES
+	    do
+	      len=`echo $DRIVE | awk '{print length($0)}'`
+	      if [ ${len} -ne 1 ]
+	      then
+	        echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $BND_DIR)"
+	        echo "Error: Drive letter is not a single character (subdirectory $DRIVE of $BND_DIR)" >> $RESPONSE_FILE
+	        ERROR_COND=8
+ 	      else
+	        i=`expr $i + 1`
+	        BDR[$i]=$DRIVE
+	        SW_FOUND=YES
+	      fi
+	    done
+	    NUM_BDR=$i
+	  else
+	    check_exempt=`echo $EXEMPT_DELIMITERS | awk -F, -v search=$DIR '{split($0,SD);
+                               for (x in SD)
+                               {
+                                 if (SD[x]==search)
+                                 {
+                                   print "found"
+                                 }
+                               }}'`
+	    if [ -z "$check_exempt" ]
+	    then	
+	      echo Warning: Directory or file name does not conform to server or client standard and will not be handled: $DIR
+	      echo Warning: Directory or file name does not conform to server or client standard and will not be handled: $DIR >> $RESPONSE_FILE
+	      echo Warning: Directory or file name does not conform to server or client standard and will not be handled: $DIR >> $NEW_RESPONSE_FILE
+	      ERROR_COND=4
+	    else
+
+##################################################################
+# 	copy across the directories that are not to be zipped 
+##################################################################
+
+	      COPYDIR_SOURCE=`echo $DIRIN"/"$PROJ"/"$DIR | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+	      COPYDIR_TARGET="${OUTDIR_PREFIX_OS2}/${CONSEGNA}/$DIR/"
+	      COPYDIR_TARGET=`echo $COPYDIR_TARGET | awk '{gsub("\/","\\\\"); print $0}'`
+	      res=`remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"`
+	      rc=$?
+              if [ $rc -ne 0 ]
+	      then
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"
+	        echo Error 126: "The command to copy software not to be zipped gave rc = $rc"
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET" >> $RESPONSE_FILE
+	        echo Error 126: "The command to copy software not to be zipped gave rc = $rc" >> $RESPONSE_FILE
+	        mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+	        exit 126
+    	      fi
+
+#############################
+# check that copy has worked
+#############################
+
+	      res=`remsh $FILE_SERVER "dir /s $COPYDIR_SOURCE" | awk '{ if (substr($2,1,4)=="file") { total=$1 }} END {print total}'`
+	      res2=`remsh $FILE_SERVER "dir /s $COPYDIR_TARGET" | awk '{if (substr($2,1,4)=="file") { total=$1 }} END {print total}'`
+	      if [ -z "$res2" -o "$res" -ne "$res2" ]
+	      then
+	        echo Error 127: the command to copy software not to be zipped gave rc 0 but failed to produce the same number of files in the target directory
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET"
+	        echo Error 127: the command to copy software not to be zipped gave rc 0 but failed to produce the same number of files in the target directory >> $RESPONSE_FILE
+	        echo remsh $FILE_SERVER "xcopy /s $COPYDIR_SOURCE $COPYDIR_TARGET" >> $RESPONSE_FILE
+	        mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+	        exit 127
+	      fi
+    	      echo $DIR >> $NEW_RESPONSE_FILE
+ 	    fi
+	  fi
+        fi
+      fi
+    else
+
+##############################
+#       copy files (not .LST)
+##############################
+
+      res=`echo $DIR | awk '{b=tolower(substr($0,length($0)-2,3)); 
+		         if (b=="lst" || b=="txt" || b=="new" || b=="wsd" || b=="doc")
+		        	{ print "found" }}'`
+      if [ -z "$res" ]
+      then
+        COPY_SOURCE=`echo $DIRIN"/"$PROJ"/"$DIR | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+        COPY_TARGET="${OUTDIR_PREFIX_OS2}/${CONSEGNA}/"
+        COPY_TARGET=`echo $COPY_TARGET | awk '{gsub("\/","\\\\"); print $0}'`
+        res=`remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"`
+        rc=$?
+        if [ $rc -ne 0 ]
+        then
+          echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"
+          echo Error 128: "The command to copy software not to be zipped gave rc = $rc"
+          echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET" >> $RESPONSE_FILE
+	  echo Error 128: "The command to copy software not to be zipped gave rc = $rc" >> $RESPONSE_FILE
+	  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+	  exit 128
+    	fi
+
+#############################
+# check that copy has worked
+#############################
+
+  	res=`remsh $FILE_SERVER "dir ${COPY_TARGET}${DIR}" | awk '{if (substr($2,1,4)=="file") { total=$1 }} END {print total}'`
+	if [ "$res" -ne "1" ]
+	then
+	  echo Error 129: the command to copy software not to be zipped gave rc 0 but failed to copy the file 
+	  echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET"
+	  echo Error 129: the command to copy software not to be zipped gave rc 0 but failed to copy the file >> $RESPONSE_FILE
+	  echo remsh $FILE_SERVER "xcopy $COPY_SOURCE $COPY_TARGET" >> $RESPONSE_FILE
+	  mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+	  exit 129
+	fi
+    	echo $DIR >> $NEW_RESPONSE_FILE
+      fi
+    fi
+  done
+
+  if [ $ERROR_COND -ge 8 ]
+  then
+    echo Error 130: exiting because of errors in the directory structure - see above messages
+    echo Error 130: exiting because of errors in the directory structure - see above messages >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 130
+  fi
+  if [ "$SW_FOUND" = "NO" ]
+  then
+    echo Error 131: could not find server or client software - check structures of directories supplied 
+    echo Error 131: could not find server or client software - check structures of directories supplied >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 131
+  fi
+
+##############################################################################
+#	give the commands to zip the software
+##############################################################################
+
+  MKTMP=`echo $MKZPFILE_TMP | awk '{gsub("\/","\\\\"); print $0}'`
+
+
+#############
+# Zip client
+#############
+
+  if [ ! -z "$CLIENT_DIR" ]
+  then
+    ZIPDIR=`echo $CLIENT_DIR | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+    ZIPNAME="B${PROJ}${CONSEGNA_NUM3}C"
+    ZIPFILE="${OUTDIR_PREFIX_OS2}\\${CONSEGNA}\\${ZIPNAME}"
+    ZIPFILE=`echo $ZIPFILE | awk '{gsub("\/","\\\\"); print $0}'`
+    res=`remsh $FILE_SERVER "mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"`
+    rc=$?
+    if [ $rc -ne 0 ]
+    then
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 132: "The command to zip the client software gave rc = $rc"
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE _C $MKTMP" >> $RESPONSE_FILE
+      echo Error 132: "The command to zip the client software gave rc = $rc" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+      exit 132
+    fi
+
+#################################################
+# gather results of client zip for response file
+#################################################
+
+    res=`remsh $FILE_SERVER "nfsdir ${OUTDIR_OS2}\\\\${ZIPNAME}.*" | awk 'BEGIN {maxb="000"}
+                                {n=split($0,A)
+                                for (i in A)
+                                {
+                                        b=substr(A[i],length(A[i])-2,3);
+                                       c=substr(A[i],length(A[i])-3,1);
+                                       if (isnumeric(b) == 1 && b > maxb && c==".")
+                                        {
+                                                maxb=b;
+                                        }
+                                }
+                        }
+                        END {print maxb}
+                        function isnumeric (x)
+                        {
+                                y=x
+                                gsub(/[0-9]/,"",y)
+                                if(length(y)>0)
+                                {
+                                        return 0
+                                }
+                                else
+                                {
+                                        return 1
+                                }
+                        }'`
+    if [ "$res" = "000" ]
+    then
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 133: "The command to zip the client software gave rc = 0 but did not produce any zip files"
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+      echo Error 133: "The command to zip the client software gave rc = 0 but did not produce any zip files" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+      exit 133
+    fi
+    if [ "$res" = "001" ]
+    then
+      res=`echo ${ZIPNAME}'.001' >> $NEW_RESPONSE_FILE`
+    else
+      res=`echo ${ZIPNAME}'.001 - ' ${res} >> $NEW_RESPONSE_FILE`
+    fi 
+  fi
+
+#############
+# zip server
+#############
+
+  i=1
+  while [ ${i} -le ${NUM_DR} ]
+  do 
+    ZIPDIR=`echo "${SERVER_DIR}/${DR[$i]}" | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+    ZIPNAME="T${PROJ}${CONSEGNA_NUM3}${DR[$i]}"
+    ZIPFILE="${OUTDIR_PREFIX_OS2}\\${CONSEGNA}\\${ZIPNAME}"
+    ZIPFILE=`echo $ZIPFILE | awk '{gsub("\/","\\\\"); print $0}'`
+    res=`remsh $FILE_SERVER "mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"`
+    rc=$?
+    if [ $rc -ne 0 ]
+    then
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 134: "The command to zip the server software gave rc = $rc"
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+      echo Error 134: "The command to zip the server software gave rc = $rc" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+      exit 134
+    fi
+
+#################################################
+# gather results of server zip for response file
+#################################################
+
+    res=`remsh $FILE_SERVER "nfsdir ${OUTDIR_OS2}\\\\${ZIPNAME}.*" | awk 'BEGIN {maxb="000"}
+                                {n=split($0,A)
+                                for (i in A)
+                                {
+                                        b=substr(A[i],length(A[i])-2,3);
+                                       c=substr(A[i],length(A[i])-3,1);
+                                       if (isnumeric(b) == 1 && b > maxb && c==".")
+                                        {
+                                                maxb=b;
+                                        }
+                                }
+                        }
+                        END {print maxb}
+                        function isnumeric (x)
+                        {
+                                y=x
+                                gsub(/[0-9]/,"",y)
+                                if(length(y)>0)
+                                {
+                                        return 0
+                                }
+                                else
+                                {
+                                        return 1
+                                }
+                        }'`
+    if [ "$res" = "000" ]
+    then
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 135: "The command to zip the server software gave rc = 0 but did not produce any zip files"
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+      echo Error 135: "The command to zip the server software gave rc = 0 but did not produce any zip files" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+      exit 135
+    fi
+    if [ "$res" = "001" ]
+    then
+      res=`echo ${ZIPNAME}'.001' >> $NEW_RESPONSE_FILE`
+    else
+      res=`echo ${ZIPNAME}'.001 -' ${res} >> $NEW_RESPONSE_FILE`
+    fi 
+  i=`expr $i + 1`
+
+  done
+
+###########
+# zip bind
+###########
+
+  i=1
+  while [ ${i} -le ${NUM_BDR} ]
+  do 
+    ZIPDIR=`echo "${BND_DIR}/${BDR[$i]}" | awk -v Ere=$SWDIR_PREFIX_AIX -v Repl=$SWDIR_PREFIX_OS2 '{sub(Ere,Repl); gsub("\/","\\\\"); print $0}'` 
+    ZIPNAME="T${PROJ}${CONSEGNA_NUM3}${BDR[$i]}"
+    ZIPFILE="${OUTDIR_PREFIX_OS2}\\${CONSEGNA}\\${ZIPNAME}"
+    ZIPFILE=`echo $ZIPFILE | awk '{gsub("\/","\\\\"); print $0}'`
+    res=`remsh $FILE_SERVER "mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"`
+    rc=$?
+    if [ $rc -ne 0 ]
+    then
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 136: "The command to zip the bind software gave rc = $rc"
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 136: "The command to zip the bind software gave rc = $rc" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1 
+      exit 136
+    fi
+
+#################################################
+# gather results of bind zip for response file
+#################################################
+
+    res=`remsh $FILE_SERVER "nfsdir ${OUTDIR_OS2}\\\\${ZIPNAME}.*" | awk 'BEGIN {maxb="000"}
+                                {n=split($0,A)
+                                for (i in A)
+                                {
+                                        b=substr(A[i],length(A[i])-2,3);
+                                       c=substr(A[i],length(A[i])-3,1);
+                                       if (isnumeric(b) == 1 && b > maxb && c==".")
+                                        {
+                                                maxb=b;
+                                        }
+                                }
+                        }
+                        END {print maxb}
+                        function isnumeric (x)
+                        {
+                                y=x
+                                gsub(/[0-9]/,"",y)
+                                if(length(y)>0)
+                                {
+                                        return 0
+                                }
+                                else
+                                {
+                                        return 1
+                                }
+                        }'`
+    if [ "$res" = "000" ]
+    then
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP"
+      echo Error 137: "The command to zip the bind software gave rc = 0 but did not produce any zip files"
+      echo "remsh $FILE_SERVER mkzpfile $ZIPDIR -z $ZIPFILE -C $MKTMP" >> $RESPONSE_FILE
+      echo Error 137: "The command to zip the bind software gave rc = 0 but did not produce any zip files" >> $RESPONSE_FILE
+      mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+      exit 137
+    fi
+    if [ "$res" = "001" ]
+    then
+      res=`echo ${ZIPNAME}'.001' >> $NEW_RESPONSE_FILE`
+    else
+      res=`echo ${ZIPNAME}'.001 -' ${res} >> $NEW_RESPONSE_FILE`
+    fi 
+    i=`expr $i + 1`
+
+  done
+done
+
+
+
+
+
+
+
+##############################################################################
+#	remove list files produced by mkzpfile
+##############################################################################
+
+res=`remsh $FILE_SERVER "del ${OUTDIR_OS2}\\\\*.lst"`
+
+
+##############################################################################
+#	if bind list file exists copy it to target directory
+##############################################################################
+
+
+if [ -r "$OUTPUT_BNDLST_AIX" ]
+then
+  res=`remsh $FILE_SERVER "xcopy $OUTPUT_BNDLST_OS2_SOURCE $OUTPUT_BNDLST_OS2_TARGET"`
+  rc=$?
+  if [ $rc -ne 0 ]
+  then
+    echo remsh $FILE_SERVER "xcopy $OUTPUT_BNDLST_OS2_SOURCE $OUTPUT_BNDLST_OS2_TARGET"
+    echo Error 38: "The command to copy the bind list gave rc = $rc"
+    echo remsh $FILE_SERVER "xcopy $OUTPUT_BNDLST_OS2_SOURCE $OUTPUT_BNDLST_OS2_TARGET" >> $RESPONSE_FILE
+    echo Error 38: "The command to copy the bind list gave rc = $rc" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 38
+  else
+    res=`echo ${CONSEGNA}'.LST' >> $NEW_RESPONSE_FILE`
+    rm $OUTPUT_BNDLST_AIX >> $RESPONSE_FILE
+  fi
+else
+  if [ "$BND_PRESENT" = "Y" ]
+  then
+    echo Error 39: "Bind files were present but no bind list was produced"
+    echo Error 39: "Bind files were present but no bind list was produced" >> $RESPONSE_FILE
+    mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE >> $RESPONSE_FILE 2>&1
+    exit 39
+  fi
+fi
+
+##############################################################################
+#	copy new_response over default response file
+##############################################################################
+
+mv $NEW_RESPONSE_FILE $RESPONSE_FILE
+if [ $? -ne 0 ]
+then
+  echo Error 40: could not rewrite the response file $RESPONSE_FILE 
+  echo Error 40: could not rewrite the response file $RESPONSE_FILE  >> $RESPONSE_FILE
+  exit 40
+fi
+
+##############################################################################
+#	update and rewrite the consegna number
+##############################################################################
+
+NEW_CONSEGNA=`echo $CONSEGNA_NUM | awk '{printf "%.5d", ++$1}'`
+echo $NEW_CONSEGNA > $CONSEGNA_FILE_BACKUP
+mv $CONSEGNA_FILE_BACKUP $CONSEGNA_FILE  2>&1
+if [ $? -ne 0 ]
+then
+  echo Error 41: could not rewrite the collid file $CONSEGNA_FILE
+  echo Error 41: could not rewrite the collid file $CONSEGNA_FILE >> $RESPONSE_FILE
+  exit 41
+fi
+
+
+echo Info:  Normal completion
+exit 0
+
+##############################################################################
+#	End of procedure
+##############################################################################
+
+

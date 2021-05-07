@@ -1,0 +1,13 @@
+#!/bin/sh
+#
+#  Script:			reject_script
+#  Instance:		notify
+#  %version:		1 %
+#  Description:		
+#  %created_by:		tomf %
+#  %date_created:	Tue May 21 11:21:23 1996 %
+
+echo "MSG:This should not be displayed"
+echo "ERROR_MSG:No rejections allowed" >&2
+
+exit 1

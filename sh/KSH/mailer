@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+#  Script:			mail_script
+#  Instance:		notify
+#  %version:		3 %
+#  Description:		Mails a file to the specified recipient
+#  %created_by:		ndjc %
+#  %date_created:	Wed Jan 21 00:49:34 1998 %
+
+# Argument 1 is the subject
+# Argument 2 contains the recipient
+# Argument 3 is the mail file
+
+if [ "$#" -le 2 ]; then
+	echo "Usage: $0 <subject> <recipients> <mail_content_file>"
+	exit 1
+fi
+
+mail_cmd="/bin/mail"
+
+os="`uname -s`"
+case $os in
+	SunOS) mail_cmd="/usr/ucb/Mail";;
+	HP-UX) mail_cmd="/usr/bin/mailx";;
+	AIX) mail_cmd="/bin/mail";;
+	IRIX|IRIX64) mail_cmd="/usr/sbin/Mail";;
+	OSF1) mail_cmd="/usr/ucb/Mail";;
+esac
+
+if [ "$AC_PT_MAILER" != "" ]; then
+	mail_cmd=$PT_MAILER
+fi
+
+$mail_cmd -s "$1" $2 < $3
+status=$?
+rm -rf $3
+
+exit $status
