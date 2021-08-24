@@ -1,10 +1,10 @@
 #!/bin/ksh
 #######################################
-# script per la verifica e 	      #
-# l'acquisizione dei file da gibli    #	
+# script per la verifica e            #
+# l'acquisizione dei file da gibli    #
 #  e relativa cancellazione via SFTP  #
 # Autore: Giorgio Fratepietro         #
-# Società:Primeur                     #
+# Societâ–’:Primeur                     #
 # Versione:1                          #
 #######################################
 
@@ -14,10 +14,11 @@ export DATA=`date "+%Oy%m%Od"`
 
 # SET INTERNAL VARIABLES
 
-export dirwork=/home/primeur/corner/
+export dirwork=/opt/ghibli/corner/
 #export dirinput=$dirwork/input
-export dirinput=$dirwork/input
-export dirlog=$dirwork/log
+#export dirinput=$dirwork/input
+export dirinput=/opt/ghibli/share/shared/temp/allineamento_cancellazione
+export dirlog=/opt/ghibli/share/logs
 export dircfg=$dirwork/cfg
 export dirbin=$dirwork/bin
 export dirdone=$dirwork/done
@@ -43,39 +44,41 @@ echo \[${unique_id}\] \[INFO\] verifico la presenza dei file da dover acquisire 
 export NFILEVERI=$(ls $dirinput | wc -l)
 if [ $NFILEVERI == 0 ]
 then
-	echo \[${unique_id}\] \[INFO\] non sono presenti file da processare in $dirinput >> $mainlog
-	echo \[${unique_id}\] ====================END=OK=$DATA========================================================================= >> $mainlog
-	exit 0
+        echo \[${unique_id}\] \[INFO\] non sono presenti file da processare in $dirinput >> $mainlog
+        echo \[${unique_id}\] ====================END=OK=$DATA========================================================================= >> $mainlog
+        exit 0
 fi
 echo \[${unique_id}\] \[INFO\] ci sono $NFILEVERI da dover processare >> $mainlog
 for VFILE in `ls $dirinput/`
 do
-	echo \[${unique_id}\] \[INFO\] verifico la presenza di file letti oggi in $VFILE >> $mainlog
-	grep $VFILE $dircfg/Utenze.csv
-	export rccred=$?
-	if [ $rccred -ne 0 ]
-	then
-			echo \[${unique_id}\] \[CRITICAL\] "non esiste la coda $VFILE nel file Utenze.csv" >> $mainlog
-			echo \[${unique_id}\] \[CRITICAL\] "RC:$rccred" >> $mainlog
-			continue
-	fi
-	echo \[${unique_id}\] \[INFO\] "la coda $VFILE è censita" >>$mainlog
-	export userSFTP=$(grep $VFILE $dircfg/Utenze.csv | awk -F ',' '{ print $2 }')
-	export pswSFTP=$(grep $VFILE $dircfg/Utenze.csv | awk -F ',' '{ print $3 }')
-	echo \[${unique_id}\] \[INFO\] "credenziali: USER=$userSFTP e PSW=$pswSFTP" >>$mainlog
-	echo \[${unique_id}\] \[INFO\] "lancio l'acquisizione dei file da Ghibli" >>$mainlog
-	$dirbin/Corner_removeGhibli.sh $userSFTP $pswSFTP $dirinput/$TODAY\_$VFILE
-	export rcCodaOggiGet=$?
-	if [ $rcCodaOggiGet -ne 0 ]
-	then
-			echo \[${unique_id}\] \[CRITICAL\] "verificare la rm per la coda $VFILE" >> $mainlog
-			echo \[${unique_id}\] \[CRITICAL\] "RC:$rcCodaOggiGet" >> $mainlog
-			continue
-	fi
-	echo \[${unique_id}\] \[INFO\] "rm per la coda $VFILE per i file di $DATA terminata correttamente" >>$mainlog
-	rm $dirinput/$TODAY\_$VFILE
-	rm $dirinput/$VFILE
+        echo \[${unique_id}\] \[INFO\] verifico la presenza di file letti oggi in $VFILE >> $mainlog
+        grep $VFILE $dircfg/Utenze.csv
+        export rccred=$?
+        if [ $rccred -ne 0 ]
+        then
+                        echo \[${unique_id}\] \[CRITICAL\] "non esiste la coda $VFILE nel file Utenze.csv" >> $mainlog
+                        echo \[${unique_id}\] \[CRITICAL\] "RC:$rccred" >> $mainlog
+                        continue
+        fi
+        echo \[${unique_id}\] \[INFO\] "la coda $VFILE â–’ censita" >>$mainlog
+        export userSFTP=$(grep $VFILE $dircfg/Utenze_Sftp.csv | awk -F ',' '{ print $2 }')
+        export pswSFTP=$(grep $VFILE $dircfg/Utenze_Sftp.csv | awk -F ',' '{ print $3 }')
+        echo \[${unique_id}\] \[INFO\] "credenziali: USER=$userSFTP e PSW=$pswSFTP" >>$mainlog
+        echo \[${unique_id}\] \[INFO\] "lancio l'acquisizione dei file da Ghibli" >>$mainlog
+        #$dirbin/Corner_removeGhibli.sh $userSFTP $pswSFTP $dirinput/$TODAY\_$VFILE
+        $dirbin/Corner_removeGhibli.sh $userSFTP $pswSFTP $dirinput/$VFILE
+        export rcCodaOggiGet=$?
+        if [ $rcCodaOggiGet -ne 0 ]
+        then
+                        echo \[${unique_id}\] \[CRITICAL\] "verificare la rm per la coda $VFILE" >> $mainlog
+                        echo \[${unique_id}\] \[CRITICAL\] "RC:$rcCodaOggiGet" >> $mainlog
+                        continue
+        fi
+        echo \[${unique_id}\] \[INFO\] "rm per la coda $VFILE per i file di $DATA terminata correttamente" >>$mainlog
+        #rm $dirinput/$TODAY\_$VFILE
+        rm $dirinput/$VFILE
 done
 echo \[${unique_id}\] \[INFO\] "rm per i file di $DATA terminata correttamente" >>$mainlog
 echo \[${unique_id}\] ====================END=OK=$DATA========================================================================= >> $mainlog
 exit 0
+

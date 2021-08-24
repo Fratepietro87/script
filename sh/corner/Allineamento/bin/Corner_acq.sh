@@ -17,13 +17,14 @@ export DATA=`date "+%Oy%m%Od"`
 export dirwork=/opt/ghibli/corner
 #export dirinput=$dirwork/input
 export dirinput=/opt/ghibli/share/shared/temp/allineamento
-export dirlog=$dirwork/log
+#export dirlog=$dirwork/log
+export dirlog=/opt/ghibli/share/logs
 export dircfg=$dirwork/cfg
 export dirbin=$dirwork/bin
 export dirdone=$dirwork/done
 export TODAY=`date "+%Y%m%d"`
 export YESTERDAY=`TZ=MYT+24 date "+%Y%m%d"`
-export ORARIO=13
+export ORARIO=130000
 #log
 
 mainlog=$dirlog/Corner_acq\_$DATA.log
@@ -57,19 +58,28 @@ do
 	export greprc=$?
 	grep $YESTERDAY $dirinput/$VFILE >/dev/null
 	export grepyd=$?
-	case [ $greprc + $grepyd ] in
+	export RCTOTALE=$(($greprc+$grepyd))
+	case $RCTOTALE in
          "2")
                         echo \[${unique_id}\] \[WARNING\] "non sono presenti file del $TODAY in $VFILE"     >> $mainlog
 						echo \[${unique_id}\] \[INFO\] "get per la coda $VFILE per i file di $DATA terminata correttamente" >>$mainlog
 						rm $dirinput/$TODAY\_$VFILE
 						rm $dirinput/$VFILE
           ;;
-         "0/1")
+         1|0)
                         echo \[${unique_id}\] \[INFO\] "sono presenti file da acquisire in data $TODAY e/o $YESTERDAY in $VFILE" >>$mainlog
 						echo \[${unique_id}\] \[INFO\] "creo l'elenco dei file da acquisire tra le 13.00 di $YESTERDAY alle 12.59 di $TODAY " >>$mainlog
 						grep $TODAY $dirinput/$VFILE | awk -v "confronto=$ORARIO" -F ";" '{if ($4 < confronto) print $0}' > $dirinput/$TODAY\_$VFILE
 						grep $YESTERDAY $dirinput/$VFILE | awk -v "confronto=$ORARIO" -F ";" '{if ($4 >= confronto) print $0}' >> $dirinput/$TODAY\_$VFILE
-						echo \[${unique_id}\] \[INFO\] "ricavo user e password dal file di conf" >>$mainlog
+                                                SIZEVFILE=$(ls -l $dirinput/$TODAY\_$VFILE | awk '{print $5}')
+						echo \[${unique_id}\] \[INFO\] "SIZEVFILE=$SIZEVFILE" >>$mainlog
+                                                        if [ $SIZEVFILE == 0 ]
+                                                        then
+                                                                echo \[${unique_id}\] \[INFO\] "non ci sono file da leggere nel range orario desiderato" >>$mainlog
+                                                                rm $dirinput/$TODAY\_$VFILE
+                                                                continue
+                                                        fi
+                                                echo \[${unique_id}\] \[INFO\] "ricavo user e password dal file di conf" >>$mainlog
 						grep $VFILE $dircfg/Utenze.csv
 						export rccred=$?
 						if [ $rccred -ne 0 ]
