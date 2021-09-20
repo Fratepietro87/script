@@ -1,12 +1,14 @@
 #!/bin/ksh
-#######################################
-# script per la verifica e 			  #
-# l'acquisizione dei file da gibli	  #	
-# via SFTP							  #
-# Autore: Giorgio Fratepietro         #
-# Società:Primeur                     #
-# Versione:1                          #
-#######################################
+#########################################################################
+# script per la verifica e 			  									#
+# l'acquisizione dei file da gibli via SFTP								#
+# Autore: Giorgio Fratepietro         									#
+# Società:Primeur                     									#
+# Versione:2                          									#
+# Cange Log							  									#
+# 20/09/2021 - aggiunta delal directory $dirtemporanea allo scopo di	#  
+#			   gestire l'eventuale multi esecuzione dello script		#
+#########################################################################
 
 ###### SET ENVIRONMENT VARIABLES
 unique_id=`echo $$`
@@ -22,6 +24,7 @@ export dirlog=/opt/ghibli/share/logs
 export dircfg=$dirwork/cfg
 export dirbin=$dirwork/bin
 export dirdone=$dirwork/done
+export dirtemporanea=$dirwork/temp
 export TODAY=`date "+%Y%m%d"`
 export YESTERDAY=`TZ=MYT+24 date "+%Y%m%d"`
 export ORARIO=130000
@@ -68,24 +71,31 @@ do
           ;;
          1|0)
                         echo \[${unique_id}\] \[INFO\] "sono presenti file da acquisire in data $TODAY e/o $YESTERDAY in $VFILE" >>$mainlog
+						echo \[${unique_id}\] \[INFO\] "muovo il file di input $VFILE nella dir di appoggio $dirtemporanea" >>$mainlog
+						mv 	$dirinput/$VFILE $dirtemporanea/$VFILE			
 						echo \[${unique_id}\] \[INFO\] "creo l'elenco dei file da acquisire tra le 13.00 di $YESTERDAY alle 12.59 di $TODAY " >>$mainlog
-						grep $TODAY $dirinput/$VFILE | awk -v "confronto=$ORARIO" -F ";" '{if ($4 < confronto) print $0}' > $dirinput/$TODAY\_$VFILE
-						grep $YESTERDAY $dirinput/$VFILE | awk -v "confronto=$ORARIO" -F ";" '{if ($4 >= confronto) print $0}' >> $dirinput/$TODAY\_$VFILE
+						grep $TODAY $dirtemporanea/$VFILE | awk -v "confronto=$ORARIO" -F ";" '{if ($4 < confronto) print $0}' > $dirtemporanea/$TODAY\_$VFILE
+						grep $YESTERDAY $dirtemporanea/$VFILE | awk -v "confronto=$ORARIO" -F ";" '{if ($4 >= confronto) print $0}' >> $dirtemporanea/$TODAY\_$VFILE
                                                 SIZEVFILE=$(ls -l $dirinput/$TODAY\_$VFILE | awk '{print $5}')
 						echo \[${unique_id}\] \[INFO\] "SIZEVFILE=$SIZEVFILE" >>$mainlog
                                                         if [ $SIZEVFILE == 0 ]
                                                         then
                                                                 echo \[${unique_id}\] \[INFO\] "non ci sono file da leggere nel range orario desiderato" >>$mainlog
-                                                                rm $dirinput/$TODAY\_$VFILE
+																echo \[${unique_id}\] \[INFO\] "pulisco la directory $dirtemporanea" >>$mainlog
+                                                                rm $dirtemporanea/$TODAY\_$VFILE
+																rm $dirtemporanea/$VFILE
                                                                 continue
                                                         fi
-                                                echo \[${unique_id}\] \[INFO\] "ricavo user e password dal file di conf" >>$mainlog
+                        echo \[${unique_id}\] \[INFO\] "ricavo user e password dal file di conf" >>$mainlog
 						grep $VFILE $dircfg/Utenze.csv
 						export rccred=$?
 						if [ $rccred -ne 0 ]
 						then
 								echo \[${unique_id}\] \[CRITICAL\] "non esiste la coda $VFILE nel file Utenze.csv" >> $mainlog
 								echo \[${unique_id}\] \[CRITICAL\] "RC:$rccred" >> $mainlog
+								echo \[${unique_id}\] \[INFO\] "pulisco la directory $dirtemporanea" >>$mainlog
+                                rm $dirtemporanea/$TODAY\_$VFILE
+								rm $dirtemporanea/$VFILE
 								continue
 						fi
 						echo \[${unique_id}\] \[INFO\] "la coda $VFILE è censita" >>$mainlog
@@ -102,8 +112,9 @@ do
 								continue
 						fi
                         echo \[${unique_id}\] \[INFO\] "get per la coda $VFILE per i file di $DATA terminata correttamente" >>$mainlog
-						rm $dirinput/$TODAY\_$VFILE
-						rm $dirinput/$VFILE
+						echo \[${unique_id}\] \[INFO\] "pulisco la directory $dirtemporanea" >>$mainlog
+                        rm $dirtemporanea/$TODAY\_$VFILE
+						rm $dirtemporanea/$VFILE
           ;;
            *)
                         echo \[${unique_id}\] \[CRITICAL\] "verificare le date nel file $VFILE" >>$mainlog
