@@ -5,7 +5,9 @@
 # file da gibli	via SFTP			  #
 # Autore: Giorgio Fratepietro         #
 # Società:Primeur                     #
-# Versione:1                          #
+# Versione:2                          #
+# mod 30/09 - forzatura dei file pgp a#
+#             estensione minuscola    #
 #######################################
 
 ###### SET ENVIRONMENT VARIABLES
@@ -25,6 +27,7 @@ export dirlog=/opt/ghibli/share/logs
 export dircfg=$dirwork/cfg
 export dirbin=$dirwork/bin
 export dirdone=$dirwork/done
+export pgpext=.pgp
 
 #log
 
@@ -58,16 +61,29 @@ echo \[${unique_id}\] \[INFO\] "inizio il ciclo di acquisizione dei file per lo 
 cd $dirwork/done
 for FILE in `cat $ELENCOFILE `
 do
+## inizio mod 30/09
 	export FILEacq=$(echo $FILE|awk -F ";" '{print $2}'| sed 's/\"//g')
-	echo \[${unique_id}\] \[INFO\] "acquisisco il file $FILE" >> $mainlog
-  echo "get $FILEacq" | sshpass -p $PASW sftp -P 2622 $USER@$hostremoto 
+	if [[ "$FILEacq" == *.pgp || "$FILEacq" == *.pGP || "$FILEacq" == *.pgP || "$FILEacq" == *.pGp || "$FILEacq" == *.PgP || "$FILEacq" == *.Pgp || "$FILEacq" == *.PGP || "$FILEacq" == *.PGp   ]] 
+	then
+		echo \[${unique_id}\] \[INFO\] "il file $FILEacq è un file di tipo PGP" >> $mainlog
+		echo \[${unique_id}\] \[INFO\] "forzo l'esensione pgp a $pgpext" >> $mainlog
+		export radicefilename=${FILEacq%????}
+		echo \[${unique_id}\] \[INFO\] "la radice del file name è $radicefilename" >> $mainlog
+		export FILEacq=$radicefilename$pgpext
+		echo \[${unique_id}\] \[INFO\] "il file da acquisire è $FILEacq" >> $mainlog
+	else
+		echo \[${unique_id}\] \[INFO\] "il file $FILEacq non è un file di tipo PGP" >> $mainlog
+	fi
+## fine mod 30/09	
+	echo \[${unique_id}\] \[INFO\] "acquisisco il file $FILEacq" >> $mainlog
+    echo "get $FILEacq" | sshpass -p $PASW sftp -P 2622 $USER@$hostremoto 
 	ls $dirwork/done/$FILEacq
 	export rcls1=$?
 	if [ $rcls1 -ne 0 ]
 	then
-                echo \[${unique_id}\] \[WARINIG\] "non scaricato il file $FILE" >> $mainlog
+                echo \[${unique_id}\] \[WARINIG\] "non scaricato il file $FILEacq" >> $mainlog
     else
-				echo \[${unique_id}\] \[INFO\] "scaricato il file $FILE" >> $mainlog
+				echo \[${unique_id}\] \[INFO\] "scaricato il file $FILEacq" >> $mainlog
 	fi
 done
 echo \[${unique_id}\] \[INFO\] "ciclo di acquisizione dei file per lo user: $USER terminato"     >> $mainlog
