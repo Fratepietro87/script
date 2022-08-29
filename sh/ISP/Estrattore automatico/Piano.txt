@@ -1,0 +1,50 @@
+Path per Estrattore "atumatico"
+RUN=/oradata/ITT0/app/spOrchSuite/bin/runtime
+MF_P=/oradata/ITT0/app/spOrchSuite/bin/runtime/Caricamenti_Censimenti/Cens_MF/produzione
+MF_C=/oradata/ITT0/app/spOrchSuite/bin/runtime/Caricamenti_Censimenti/Cens_MF/collaudo
+WSRR_P=/oradata/ITT0/app/spOrchSuite/bin/runtime/Caricamenti_Censimenti/Cens_WSRR/produzione
+WSRR_C=/oradata/ITT0/app/spOrchSuite/bin/runtime/Caricamenti_Censimenti/Cens_WSRR/collaudo
+WORK=/oradata/ITT0/app/spOrchSuite/bin/runtime/WORK
+
+Estrattore Automatico
+deve essere lanciato alla fine della procedura di export\import del nuovo flusso in orchestration (a seguito di una validazione in change console)
+cd WORK
+../SanpaoloExtractor.sh PKFLUSSO -f 
+rm * .sh
+rm *.JCL*
+rm *.cmd
+for CENSIMENTI in 'cat ls'
+
+Case if CFT_Spz_Qmanager like *POOPER  mv $CENSIMENTO  $MF_P
+     if  CFT_Spz_Qmanager = XPEDMERV   mv $CENSIMENTO  $MF_P
+     then mv $CENSIMENTO $WSRR_P
+
+
+	 
+script di carimento MF DB2
+cd $MF_P
+lancia uniscitemplate in $MF_P
+mv *.*.S $MF_C
+mv *.*.X $MF_C
+
+Send_Host_All_Cloni.sh OPERAZIONE.CLONE
+Send_Host_MB.sh OPERAZIONE.CLONE.X
+Send_Host_Clone_System.sh OPERAZIONE.CLONE.S S
+Send_Host_Clone_System_Mb.sh OPERAZIONE.CLONE.X X	 
+
+
+
+script  di carimento WSRR
+
+cd $WSRR_P
+for CENSIMENTI in 'cat ls'
+
+
+Case if CFT_SPZ_CODAMQ  = OOROSPO  
+          perl -pi -e 's/CFT\_TGT\_FILE\=DOP0/CFT\_TGT\_FILE\=SDS\.DOP0/g' $CENSIMENTO;    mv $CENSIMENTO $WSRR_C	 
+	 if CFT_SPZ_CODAMQ  = OORMXED 
+	      perl -pi -e 's/CFT\_TGT\_FILE\=DSPX/CFT\_TGT\_FILE\=SDX\.DSPX/g' $CENSIMENTO;    mv $CENSIMENTO $WSRR_C
+	 if CFT_SPZ_CODAMQ  like OOQ%  mv $CENSIMENTO $WSRR_C
+	 then echo "non c'è ambiente di collaudo"
+lancaire uno script che modello carica_cens14MARZO faccia il caricamento sia in collaudo che in produzione
+	       
